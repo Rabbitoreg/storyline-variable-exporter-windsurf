@@ -44,7 +44,7 @@ XML PARSING ASSUMPTIONS:
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Storyline Variable Exporter - v2.0</title>
+    <title>Storyline Variable Exporter - v2.1</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -176,6 +176,11 @@ XML PARSING ASSUMPTIONS:
                 
                 console.log('Found XML files:', xmlFiles);
                 
+                // Update progress
+                if (window.setProcessingStatus) {
+                    window.setProcessingStatus(`Found ${xmlFiles.length} XML files...`);
+                }
+                
                 let variables = [];
                 let sceneSlideMap = new Map(); // Map slide files to scene/slide names
                 
@@ -234,10 +239,16 @@ XML PARSING ASSUMPTIONS:
                     });
                     
                     console.log('=== EXTRACTING VARIABLES FROM STORY.XML ===');
+                    if (window.setProcessingStatus) {
+                        window.setProcessingStatus('Extracting variables from story.xml...');
+                    }
                     variables = extractStoryVariables(storyContent);
                     console.log(`Extracted ${variables.length} variables from story.xml`);
                     
                     // Find usage in all XML files
+                    if (window.setProcessingStatus) {
+                        window.setProcessingStatus(`Analyzing variable usage in ${xmlFiles.length} files...`);
+                    }
                     for (const xmlFile of xmlFiles) {
                         const xmlContent = await contents.files[xmlFile].async('text');
                         findVariableUsageByIds(xmlContent, xmlFile, variables, sceneSlideMap);
@@ -1614,7 +1625,11 @@ XML PARSING ASSUMPTIONS:
                 }
                 
                 try {
+                    setIsProcessing(true);
+                    setProcessingStatus('Loading .story file...');
                     console.log('Starting to parse file...');
+                    
+                    setProcessingStatus('Extracting XML files...');
                     const variables = await parseStoryFile(file);
                     console.log('Parsing complete, variables found:', variables);
                     
@@ -1667,20 +1682,22 @@ XML PARSING ASSUMPTIONS:
                         console.log('✅ Story file structure matches all documented assumptions');
                     }
                     
-                    if (variables.length === 0) {
-                        alert('No variables found in this .story file. Check browser console for details.');
-                    } else {
-                        // Pass variables to parent component
-                        window.handleVariablesExtracted(variables);
-                    }
+                    setProcessingStatus('Analysis complete!');
+                    setExtractedVariables(variables);
+                    setCurrentView('explorer');
+                    setIsProcessing(false);
                 } catch (error) {
                     console.error('Error parsing file:', error);
-                    alert(`Error parsing file: ${error.message}`);
+                    alert(`Error parsing .story file: ${error.message}`);
+                    setIsProcessing(false);
+                    setProcessingStatus('');
                 }
             };
             
-            const handleFileInput = (e) => {
-                const file = e.target.files[0];
+            const handleDrop = (e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                const file = e.dataTransfer.files[0];
                 if (file) {
                     handleFileSelect(file);
                 }
@@ -1688,7 +1705,10 @@ XML PARSING ASSUMPTIONS:
             
             return (
                 <div className="max-w-2xl mx-auto p-6">
-                    <h2 className="text-2xl font-bold mb-6">Upload Storyline File</h2>
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-bold">Upload Storyline File</h2>
+                        <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">v2.1</span>
+                    </div>
                     <div 
                         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
                             isDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
@@ -1732,9 +1752,12 @@ XML PARSING ASSUMPTIONS:
                         )}
                         {isProcessing && (
                             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                <p className="text-blue-800 text-sm">
-                                    🔄 Processing file...
-                                </p>
+                                <div className="flex items-center justify-center space-x-2">
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                    <p className="text-blue-800 text-sm">
+                                        {processingStatus || 'Processing file...'}
+                                    </p>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -2583,10 +2606,11 @@ XML PARSING ASSUMPTIONS:
 
         // Main App Component
         const App = () => {
-            const [currentView, setCurrentView] = useState('upload');
-            const [variables, setVariables] = useState([]);
-            const [extractedVariables, setExtractedVariables] = useState([]);
-            const [isProcessing, setIsProcessing] = useState(false);
+            const [selectedFile, setSelectedFile] = React.useState(null);
+            const [extractedVariables, setExtractedVariables] = React.useState([]);
+            const [currentView, setCurrentView] = React.useState('upload');
+            const [isProcessing, setIsProcessing] = React.useState(false);
+            const [processingStatus, setProcessingStatus] = React.useState('');
             
             // Global handler for extracted variables
             window.handleVariablesExtracted = (variables) => {
@@ -2594,6 +2618,9 @@ XML PARSING ASSUMPTIONS:
                 setCurrentView('explorer');
                 setIsProcessing(false);
             };
+            
+            // Global progress status updater
+            window.setProcessingStatus = setProcessingStatus;
             
             const renderView = () => {
                 switch (currentView) {
