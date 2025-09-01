@@ -251,6 +251,30 @@ XML PARSING ASSUMPTIONS:
                     }
                     for (const xmlFile of xmlFiles) {
                         const xmlContent = await contents.files[xmlFile].async('text');
+                        
+                        // Extract %varname% references from slide XML files
+                        const slideVariables = extractVariablesFromXML(xmlContent, xmlFile);
+                        
+                        // Merge slide variables with existing variables
+                        for (const slideVar of slideVariables) {
+                            const existing = variables.find(v => v.variableName === slideVar.variableName);
+                            if (existing) {
+                                // Merge slide usage into existing variable
+                                if (slideVar.slideUsage) {
+                                    if (!existing.slideUsage) existing.slideUsage = [];
+                                    for (const usage of slideVar.slideUsage) {
+                                        if (!existing.slideUsage.includes(usage)) {
+                                            existing.slideUsage.push(usage);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Add new variable found in slides
+                                variables.push(slideVar);
+                            }
+                        }
+                        
+                        // Find JavaScript usage
                         findVariableUsageByIds(xmlContent, xmlFile, variables, sceneSlideMap);
                     }
                 } else {
