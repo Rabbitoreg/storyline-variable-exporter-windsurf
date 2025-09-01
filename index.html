@@ -2073,12 +2073,6 @@ XML PARSING ASSUMPTIONS:
                             </p>
                             <div className="flex gap-2">
                                 <button 
-                                    onClick={handleAdd}
-                                    className="px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700"
-                                >
-                                    ➕ Add Variable
-                                </button>
-                                <button 
                                     onClick={() => exportToCSV(variables)}
                                     className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
                                 >
@@ -2103,14 +2097,27 @@ XML PARSING ASSUMPTIONS:
                                         title="Upload updated .story file to merge changes while preserving descriptions/tags"
                                     />
                                 </label>
-                                <button 
-                                    onClick={() => handleSyncToStoryline()}
-                                    className="px-3 py-1 bg-orange-600 text-white text-sm rounded hover:bg-orange-700"
-                                    disabled={!window.originalStoryFile}
-                                    title={!window.originalStoryFile ? 'Upload a .story file first' : 'Sync changes back to Storyline'}
-                                >
-                                    💾 Sync to Storyline
-                                </button>
+                                
+                                {/* Danger Zone - File Modification Buttons */}
+                                <div className="border-l-2 border-red-300 pl-2 ml-2">
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => handleSyncToStoryline()}
+                                            className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 border border-red-700"
+                                            disabled={!window.originalStoryFile}
+                                            title={!window.originalStoryFile ? 'Upload a .story file first' : '⚠️ DANGER: Modifies your .story file'}
+                                        >
+                                            💾 Sync to Storyline
+                                        </button>
+                                        <button 
+                                            onClick={handleAdd}
+                                            className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 border border-red-700"
+                                        >
+                                            ➕ Add Variable
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-red-600 mt-1 font-medium">⚠️ Danger Zone - Modifies .story file</p>
+                                </div>
                             </div>
                         </div>
                     </div>
