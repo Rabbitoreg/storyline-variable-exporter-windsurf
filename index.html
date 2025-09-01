@@ -265,7 +265,20 @@ XML PARSING ASSUMPTIONS:
                                     // Add slide usage to existing variable
                                     if (!existing.slideUsage) existing.slideUsage = [];
                                     
-                                    const slideUsageLocation = `Referenced by text element on "${xmlFile}" in slide`;
+                                    // Extract slide name from XML content
+                                    let slideName = 'Unknown Slide';
+                                    const slideNameMatch = xmlContent.match(/<sld[^>]*name="([^"]+)"/i);
+                                    if (slideNameMatch && slideNameMatch[1]) {
+                                        slideName = slideNameMatch[1];
+                                    } else {
+                                        // Fallback to filename without path/extension
+                                        const fileMatch = xmlFile.match(/([^\/\\]+)\.xml$/);
+                                        if (fileMatch) {
+                                            slideName = fileMatch[1];
+                                        }
+                                    }
+                                    
+                                    const slideUsageLocation = `Referenced by text element on "${slideName}"`;
                                     if (!existing.slideUsage.includes(slideUsageLocation)) {
                                         existing.slideUsage.push(slideUsageLocation);
                                         console.log(`Added slide usage for ${varName}: ${slideUsageLocation}`);
