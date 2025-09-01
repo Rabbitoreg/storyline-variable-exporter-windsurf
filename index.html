@@ -1694,8 +1694,10 @@ XML PARSING ASSUMPTIONS:
                     }
                     
                     setProcessingStatus('Analysis complete!');
-                    setExtractedVariables(variables);
-                    setCurrentView('explorer');
+                    // Use global handler to update variables and view
+                    if (window.handleVariablesExtracted) {
+                        window.handleVariablesExtracted(variables);
+                    }
                     setIsProcessing(false);
                 } catch (error) {
                     console.error('Error parsing file:', error);
