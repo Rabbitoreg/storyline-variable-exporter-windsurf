@@ -46,41 +46,16 @@ XML PARSING ASSUMPTIONS:
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/fast-xml-parser@4.3.2/src/fxp.min.js"></script>
     <style>
         .btn-primary {
-            background-color: #2563eb;
-            color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
-            border: none;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        .btn-primary:hover {
-            background-color: #1d4ed8;
+            @apply bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors;
         }
         .btn-secondary {
-            background-color: #e5e7eb;
-            color: #374151;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
-            border: none;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        .btn-secondary:hover {
-            background-color: #d1d5db;
+            @apply bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors;
         }
         .input-field {
-            width: 100%;
-            padding: 0.5rem 0.75rem;
-            border: 1px solid #d1d5db;
-            border-radius: 0.5rem;
-            outline: none;
-        }
-        .input-field:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+            @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent;
         }
     </style>
 </head>
@@ -90,12 +65,108 @@ XML PARSING ASSUMPTIONS:
     <script type="text/babel">
         const { useState } = React;
         
+        // Validate .story file structure against documented assumptions
+        const validateStoryStructure = (storyContent, variables) => {
+            const warnings = [];
+            const errors = [];
+            
+            console.log('=== STORY STRUCTURE VALIDATION ===');
+            
+            // Check 1: Verify varLst section exists
+            const varLstMatch = storyContent.match(/<varLst[^>]*>([\s\S]*?)<\/varLst>/);
+            if (!varLstMatch) {
+                errors.push('Missing <varLst> section in story.xml');
+                return { warnings, errors };
+            }
+            
+            // Check 2: Parse and analyze variable structure
+            const parser = new DOMParser();
+            const tempDoc = parser.parseFromString(`<root>${varLstMatch[1]}</root>`, 'text/xml');
+            const varElements = tempDoc.querySelectorAll('var');
+            
+            console.log(`Found ${varElements.length} variables in <varLst>`);
+            
+            // Expected attributes based on documentation
+            const expectedAttrs = ['g', 'verG', 'name', 'dataType', 'val', 'type', 'propPath', 'isRandom', 'randomMin', 'randomMax', 'defaultEmptyIfZero'];
+            const expectedDataTypes = ['text', 'num', 'bool'];
+            const expectedTypes = ['user', 'builtIn'];
+            
+            const foundAttrs = new Set();
+            const foundDataTypes = new Set();
+            const foundTypes = new Set();
+            
+            // Analyze each variable
+            varElements.forEach((varEl, index) => {
+                const attrs = Array.from(varEl.attributes).map(attr => attr.name);
+                attrs.forEach(attr => foundAttrs.add(attr));
+                
+                const dataType = varEl.getAttribute('dataType');
+                if (dataType) foundDataTypes.add(dataType);
+                
+                const type = varEl.getAttribute('type');
+                if (type) foundTypes.add(type);
+                
+                // Check GUID format for g and verG
+                const g = varEl.getAttribute('g');
+                const verG = varEl.getAttribute('verG');
+                const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                
+                if (g && !guidPattern.test(g)) {
+                    warnings.push(`Variable ${index + 1}: 'g' attribute doesn't match GUID format: ${g}`);
+                }
+                if (verG && !guidPattern.test(verG)) {
+                    warnings.push(`Variable ${index + 1}: 'verG' attribute doesn't match GUID format: ${verG}`);
+                }
+                
+                // Check for text user variables with localizedValue
+                if (type === 'user' && dataType === 'text') {
+                    const hasLocalizedValue = varEl.querySelector('localizedValue') !== null;
+                    if (!hasLocalizedValue) {
+                        warnings.push(`Text user variable '${varEl.getAttribute('name')}' missing <localizedValue /> element`);
+                    }
+                }
+            });
+            
+            // Check 3: Compare found attributes against expected
+            const missingAttrs = expectedAttrs.filter(attr => !foundAttrs.has(attr));
+            const extraAttrs = Array.from(foundAttrs).filter(attr => !expectedAttrs.includes(attr));
+            
+            if (missingAttrs.length > 0) {
+                warnings.push(`Missing expected attributes: ${missingAttrs.join(', ')}`);
+            }
+            if (extraAttrs.length > 0) {
+                warnings.push(`Found unexpected attributes: ${extraAttrs.join(', ')}`);
+            }
+            
+            // Check 4: Data type validation
+            const invalidDataTypes = Array.from(foundDataTypes).filter(dt => !expectedDataTypes.includes(dt));
+            if (invalidDataTypes.length > 0) {
+                warnings.push(`Found unexpected dataTypes: ${invalidDataTypes.join(', ')} (expected: ${expectedDataTypes.join(', ')})`);
+            }
+            
+            // Check 5: Variable type validation
+            const invalidTypes = Array.from(foundTypes).filter(t => !expectedTypes.includes(t));
+            if (invalidTypes.length > 0) {
+                warnings.push(`Found unexpected variable types: ${invalidTypes.join(', ')} (expected: ${expectedTypes.join(', ')})`);
+            }
+            
+            // Summary
+            console.log('Structure validation complete:');
+            console.log(`- Found attributes: ${Array.from(foundAttrs).join(', ')}`);
+            console.log(`- Found dataTypes: ${Array.from(foundDataTypes).join(', ')}`);
+            console.log(`- Found types: ${Array.from(foundTypes).join(', ')}`);
+            console.log(`- Warnings: ${warnings.length}, Errors: ${errors.length}`);
+            
+            return { warnings, errors };
+        };
+
         // Story file parser
         const parseStoryFile = async (file) => {
             try {
                 const zip = new JSZip();
                 const contents = await zip.loadAsync(file);
                 
+                // Get all XML files
                 const xmlFiles = Object.keys(contents.files).filter(name => 
                     name.endsWith('.xml') && !contents.files[name].dir
                 );
@@ -103,67 +174,141 @@ XML PARSING ASSUMPTIONS:
                 console.log('Found XML files:', xmlFiles);
                 
                 let variables = [];
-                let sceneSlideMap = new Map();
+                let sceneSlideMap = new Map(); // Map slide files to scene/slide names
                 
+                // First, build a map of scene and slide names from story.xml
                 const storyXmlFile = xmlFiles.find(f => f.includes('story.xml'));
                 if (storyXmlFile) {
                     const storyContent = await contents.files[storyXmlFile].async('text');
-                    variables = extractStoryVariables(storyContent);
+                    console.log('=== BUILDING SCENE/SLIDE MAP FROM STORY.XML ===');
                     
+                    // Extract scene and slide structure from story.xml
+                    const sceneMatches = storyContent.matchAll(/<scene[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/scene>/gi);
+                    for (const sceneMatch of sceneMatches) {
+                        const sceneName = sceneMatch[1];
+                        const sceneContent = sceneMatch[2];
+                        console.log(`Found scene: "${sceneName}"`);
+                        
+                        // Find slides within this scene
+                        const slideMatches = sceneContent.matchAll(/<slide[^>]*(?:name="([^"]+)"|title="([^"]+)"|displayName="([^"]+)")[^>]*(?:href="([^"]+)"|src="([^"]+)")?/gi);
+                        for (const slideMatch of slideMatches) {
+                            const slideName = slideMatch[1] || slideMatch[2] || slideMatch[3] || 'Unknown Slide';
+                            const slideHref = slideMatch[4] || slideMatch[5];
+                            
+                            if (slideHref) {
+                                sceneSlideMap.set(slideHref, { sceneName, slideName });
+                                console.log(`Mapped ${slideHref} -> "${sceneName} > ${slideName}"`);
+                            }
+                        }
+                    }
+                    
+                    console.log('=== EXTRACTING VARIABLES FROM STORY.XML ===');
+                    variables = extractStoryVariables(storyContent);
+                    console.log(`Extracted ${variables.length} variables from story.xml`);
+                    
+                    // Find usage in all XML files
                     for (const xmlFile of xmlFiles) {
                         const xmlContent = await contents.files[xmlFile].async('text');
                         findVariableUsageByIds(xmlContent, xmlFile, variables, sceneSlideMap);
                     }
+                } else {
+                    console.log('No story.xml file found in .story archive');
                 }
                 
-                return variables.reduce((acc, current) => {
+                console.log('Total variables found:', variables.length);
+                
+                // Remove duplicates based on variable name
+                const uniqueVariables = variables.reduce((acc, current) => {
                     const existing = acc.find(item => item.variableName === current.variableName);
                     if (!existing) {
                         acc.push(current);
                     }
                     return acc;
                 }, []);
+                
+                return uniqueVariables;
             } catch (error) {
                 throw new Error(`Failed to parse .story file: ${error.message}`);
             }
         };
         
-        // Extract variables from story.xml
+        // Extract variables from story.xml using proper XML DOM parsing
         const extractStoryVariables = (xmlContent) => {
             const variables = [];
             
+            console.log('=== PARSING XML WITH DOM PARSER ===');
+            console.log('XML content length:', xmlContent.length);
+            
             try {
+                // Parse XML using DOMParser
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
                 
+                // Check for parsing errors
                 const parseError = xmlDoc.querySelector('parsererror');
                 if (parseError) {
+                    console.error('XML parsing error:', parseError.textContent);
                     throw new Error('Failed to parse XML: ' + parseError.textContent);
                 }
                 
+                // Find all <var> elements using DOM methods
                 const varElements = xmlDoc.querySelectorAll('var');
+                console.log(`Found ${varElements.length} <var> elements in XML`);
                 
-                varElements.forEach((varElement) => {
+                varElements.forEach((varElement, index) => {
+                    console.log(`Processing var element ${index + 1}:`);
+                    
+                    // Extract attributes using DOM methods
+                    const gId = varElement.getAttribute('g') || '';
+                    const verGId = varElement.getAttribute('verG') || '';
                     const varName = varElement.getAttribute('name');
                     const dataType = varElement.getAttribute('dataType');
+                    const defaultValue = varElement.getAttribute('val') || '';
                     const varType = varElement.getAttribute('type');
+                    const randomMin = varElement.getAttribute('randomMin') || '';
+                    const randomMax = varElement.getAttribute('randomMax') || '';
                     
-                    if (varName && dataType && varType) {
-                        variables.push({
-                            variableName: varName,
-                            dataType: mapStoryDataType(dataType),
-                            defaultValue: varElement.getAttribute('val') || '',
-                            scope: varType === 'user' ? 'User' : 'builtIn',
-                            slideUsage: [],
-                            jsUsage: [],
-                            description: '',
-                            tags: '',
-                            owner: '',
-                            definedIn: 'story.xml',
-                            internalId: varElement.getAttribute('g') || '',
-                            versionId: varElement.getAttribute('verG') || ''
-                        });
+                    console.log(`  - name: "${varName}"`);
+                    console.log(`  - type: "${varType}"`);
+                    console.log(`  - dataType: "${dataType}"`);
+                    console.log(`  - g: "${gId}"`);
+                    console.log(`  - verG: "${verGId}"`);
+                    console.log(`  - val: "${defaultValue}"`);
+                    
+                    if (!varName) {
+                        console.warn('Skipping var element without name attribute');
+                        return;
                     }
+                    
+                    if (!dataType) {
+                        console.warn(`Skipping var "${varName}" without dataType attribute`);
+                        return;
+                    }
+                    
+                    if (!varType) {
+                        console.warn(`Skipping var "${varName}" without type attribute`);
+                        return;
+                    }
+                    
+                    console.log(`✓ Adding variable: ${varName} (${varType})`);
+                    
+                    variables.push({
+                        variableName: varName,
+                        dataType: mapStoryDataType(dataType),
+                        defaultValue: defaultValue,
+                        scope: varType === 'user' ? 'User' : 'builtIn',
+                        slideUsage: [],
+                        jsUsage: [],
+                        description: '',
+                        tags: '',
+                        owner: '',
+                        definedIn: 'story.xml',
+                        internalId: gId,
+                        versionId: verGId,
+                        randomMin: randomMin || '0',
+                        randomMax: randomMax || '0',
+                        useCount: 0
+                    });
                 });
                 
             } catch (error) {
@@ -171,41 +316,247 @@ XML PARSING ASSUMPTIONS:
                 throw new Error(`XML parsing failed: ${error.message}`);
             }
             
+            const userVars = variables.filter(v => v.scope === 'User');
+            const builtinVars = variables.filter(v => v.scope === 'builtIn');
+            console.log(`=== EXTRACTION COMPLETE ===`);
+            console.log(`Total: ${variables.length} variables (${userVars.length} User, ${builtinVars.length} builtIn)`);
+            
             return variables;
         };
         
-        // Find variable usage in XML files
+        // Parse XML and extract slide/scene/object info using proper DOM parsing
+        const extractSceneSlideInfo = (xmlContent, position, fileName, sceneSlideMap) => {
+            try {
+                console.log(`=== DETAILED XML PARSING DEBUG for ${fileName} ===`);
+                console.log(`XML content length: ${xmlContent.length} chars`);
+                console.log(`Position: ${position}`);
+                
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
+                
+                // Check for parsing errors
+                const parseError = xmlDoc.querySelector('parsererror');
+                if (parseError) {
+                    console.log(`❌ XML parsing error in ${fileName}:`, parseError.textContent);
+                    return `Referenced by "Unknown Object" on "Unknown Slide" in "Unknown Scene"`;
+                }
+                
+                console.log(`✅ XML parsed successfully`);
+                console.log(`Root element:`, xmlDoc.documentElement?.tagName);
+                console.log(`All elements:`, Array.from(xmlDoc.querySelectorAll('*')).map(el => el.tagName).slice(0, 10));
+                
+                // Extract slide title from <sld> root element (Storyline slide format)
+                let slideTitle = 'Unknown Slide';
+                const sldElement = xmlDoc.querySelector('sld');
+                console.log(`<sld> element found:`, !!sldElement);
+                if (sldElement) {
+                    console.log(`<sld> attributes:`, Array.from(sldElement.attributes).map(attr => `${attr.name}="${attr.value}"`));
+                    slideTitle = sldElement.getAttribute('name') || slideTitle;
+                    console.log(`Extracted slide title from <sld> name: "${slideTitle}"`);
+                } else {
+                    // Fallback to other slide elements
+                    const slideElement = xmlDoc.querySelector('slide');
+                    console.log(`Fallback <slide> element found:`, !!slideElement);
+                    if (slideElement) {
+                        console.log(`<slide> attributes:`, Array.from(slideElement.attributes).map(attr => `${attr.name}="${attr.value}"`));
+                        slideTitle = slideElement.getAttribute('title') || 
+                                    slideElement.getAttribute('name') || 
+                                    slideElement.getAttribute('displayName') || 
+                                    slideTitle;
+                        console.log(`Extracted slide title from <slide>: "${slideTitle}"`);
+                    }
+                }
+                
+                // Extract scene name
+                let sceneName = 'Unknown Scene';
+                const sceneElement = xmlDoc.querySelector('scene');
+                console.log(`Scene element found:`, !!sceneElement);
+                if (sceneElement) {
+                    console.log(`Scene attributes:`, Array.from(sceneElement.attributes).map(attr => `${attr.name}="${attr.value}"`));
+                    sceneName = sceneElement.getAttribute('name') || 
+                               sceneElement.getAttribute('title') || 
+                               sceneName;
+                    console.log(`Extracted scene name: "${sceneName}"`);
+                }
+                
+                // If we have a scene mapping, use that
+                const mappedInfo = sceneSlideMap.get(fileName);
+                if (mappedInfo && mappedInfo.sceneName) {
+                    sceneName = mappedInfo.sceneName;
+                    console.log(`Using mapped scene name: "${sceneName}"`);
+                }
+                
+                // Find the object context around the variable reference position
+                let objectName = 'Unknown Object';
+                console.log(`Looking for object context around position ${position}...`);
+                
+                // Find all elements with JavaScript content
+                const scriptElements = xmlDoc.querySelectorAll('*');
+                console.log(`Checking ${scriptElements.length} elements for JavaScript content...`);
+                
+                for (const element of scriptElements) {
+                    const elementText = element.textContent || element.innerHTML || '';
+                    if (elementText.includes('GetVar') || elementText.includes('SetVar')) {
+                        const name = element.getAttribute('name') || element.getAttribute('title');
+                        const id = element.getAttribute('id');
+                        const tagName = element.tagName;
+                        
+                        console.log(`Found JS in <${tagName}> element: name="${name}", id="${id}"`);
+                        console.log(`Element content preview:`, elementText.substring(0, 200));
+                        
+                        if (name && !name.match(/^[0-9a-f-]{8,}/i) && !name.startsWith('Calcy')) {
+                            objectName = id ? `${name} - ${id}` : name;
+                            console.log(`Using object name: "${objectName}"`);
+                            break;
+                        } else if (id && id.match(/^[0-9]+$/)) {
+                            objectName = `${tagName} - ${id}`;
+                            console.log(`Using object with ID: "${objectName}"`);
+                            break;
+                        }
+                    }
+                }
+                
+                console.log(`=== FINAL RESULT ===`);
+                console.log(`Object: "${objectName}", Slide: "${slideTitle}", Scene: "${sceneName}"`);
+                return `Referenced by "${objectName}" on "${slideTitle}" in "${sceneName}"`;
+                
+            } catch (error) {
+                console.log(`❌ Error parsing XML from ${fileName}:`, error.message);
+                return `Referenced by "Unknown Object" on "Unknown Slide" in "Unknown Scene"`;
+            }
+        };
+
+        // Find variable usage by ID references in XML files
         const findVariableUsageByIds = (xmlContent, fileName, variables, sceneSlideMap) => {
-            // Search for JavaScript variable usage
-            const jsPatterns = [
+            // Search for variable references by g ID (slide usage)
+            for (const variable of variables) {
+                if (!variable.internalId) continue;
+                
+                // Pattern for g="variableId" references (these are slide usage - variable references in slide elements)
+                const gPattern = new RegExp(`g="${variable.internalId.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}"`, 'gi');
+                let gMatch;
+                while ((gMatch = gPattern.exec(xmlContent)) !== null) {
+                    const sceneSlideInfo = extractSceneSlideInfo(xmlContent, gMatch.index, fileName, sceneSlideMap);
+                    // Ensure consistent format: "Referenced by [object] on [slide] in [scene]"
+                    const usageInfo = sceneSlideInfo.startsWith('Referenced by') ? sceneSlideInfo : `Referenced by "Unknown Object" on "${sceneSlideInfo}" in "Unknown Scene"`;
+                    if (!variable.slideUsage.includes(usageInfo)) {
+                        variable.slideUsage.push(usageInfo);
+                        console.log(`Found ${variable.variableName} slide usage by g ID: ${usageInfo}`);
+                    }
+                }
+                
+                // Pattern for verG="versionId" references (these are also slide usage)
+                if (variable.versionId) {
+                    const verGPattern = new RegExp(`verG="${variable.versionId.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}"`, 'gi');
+                    let verGMatch;
+                    while ((verGMatch = verGPattern.exec(xmlContent)) !== null) {
+                        const sceneSlideInfo = extractSceneSlideInfo(xmlContent, verGMatch.index, fileName, sceneSlideMap);
+                        // Ensure consistent format: "Referenced by [object] on [slide] in [scene]"
+                        const usageInfo = sceneSlideInfo.startsWith('Referenced by') ? sceneSlideInfo : `Referenced by "Unknown Object" on "${sceneSlideInfo}" in "Unknown Scene"`;
+                        if (!variable.slideUsage.includes(usageInfo)) {
+                            variable.slideUsage.push(usageInfo);
+                            console.log(`Found ${variable.variableName} slide usage by verG ID: ${usageInfo}`);
+                        }
+                    }
+                }
+            }
+            
+            // Search for JavaScript variable usage - focus on XML-encoded quotes
+            console.log(`=== SEARCHING FOR JS USAGE IN ${fileName} ===`);
+            
+            // Primary patterns for XML-encoded JavaScript (how it's actually stored)
+            const allJsPatterns = [
+                // XML-encoded quotes (&quot;) - this is how it's stored in XML
                 /player\.GetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
                 /player\.SetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
                 /GetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
                 /SetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
+                // Literal single quotes (not HTML entities)
                 /player\.GetVar\s*\(\s*'([^']+)'/gi,
                 /player\.SetVar\s*\(\s*'([^']+)'/gi,
                 /GetVar\s*\(\s*'([^']+)'/gi,
-                /SetVar\s*\(\s*'([^']+)'/gi
+                /SetVar\s*\(\s*'([^']+)'/gi,
+                // Fallback for regular double quotes (in case some are decoded)
+                /player\.GetVar\s*\(\s*"([^"]+)"\s*\)/gi,
+                /player\.SetVar\s*\(\s*"([^"]+)"/gi,
+                /GetVar\s*\(\s*"([^"]+)"\s*\)/gi,
+                /SetVar\s*\(\s*"([^"]+)"/gi
             ];
             
-            for (const jsPattern of jsPatterns) {
+            // First check CDATA sections
+            const cdataMatches = xmlContent.match(/<!\[CDATA\[([\s\S]*?)\]\]>/gi);
+            if (cdataMatches) {
+                console.log(`Found ${cdataMatches.length} CDATA blocks in ${fileName}`);
+                for (const cdataBlock of cdataMatches) {
+                    const jsCode = cdataBlock.replace(/<!\[CDATA\[|\]\]>/g, '');
+                    console.log(`CDATA JavaScript (${jsCode.length} chars):`, jsCode.substring(0, 500));
+                    
+                    // Also try HTML-decoded version of the JavaScript
+                    const decodedJsCode = jsCode
+                        .replace(/&quot;/g, '"')
+                        .replace(/&lt;/g, '<')
+                        .replace(/&gt;/g, '>')
+                        .replace(/&amp;/g, '&');
+                    
+                    if (decodedJsCode !== jsCode) {
+                        console.log(`Decoded CDATA JavaScript:`, decodedJsCode.substring(0, 500));
+                    }
+                    
+                    // Search the original XML-encoded version first (this is key!)
+                    console.log(`Searching for &quot; patterns in CDATA block...`);
+                    
+                    // Find all JS variable references in this CDATA block - search XML-encoded version first
+                    for (const jsPattern of allJsPatterns) {
+                        let jsMatch;
+                        while ((jsMatch = jsPattern.exec(jsCode)) !== null) {
+                            const varName = jsMatch[1];
+                            const operation = jsMatch[0].includes('Get') ? 'Get' : 'Set';
+                            console.log(`Found JS ${operation}Var reference to variable: "${varName}" in ${fileName}`);
+                            
+                            // Find this variable in our list
+                            const variable = variables.find(v => v.variableName === varName);
+                            if (variable) {
+                                const sceneSlideInfo = extractSceneSlideInfo(xmlContent, xmlContent.indexOf(cdataBlock), fileName, sceneSlideMap);
+                                const jsUsageInfo = `${sceneSlideInfo} (${operation}Var)`;
+                                if (!variable.jsUsage.includes(jsUsageInfo)) {
+                                    variable.jsUsage.push(jsUsageInfo);
+                                    console.log(`✅ Added ${varName} JavaScript usage: ${jsUsageInfo}`);
+                                }
+                            } else {
+                                console.log(`⚠️ Variable "${varName}" referenced in JS but not found in variable list`);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Also search in regular XML content for inline JS - prioritize &quot; patterns
+            console.log(`Searching for inline JS patterns in XML content...`);
+            
+            // Search XML content directly for &quot; patterns first
+            for (const jsPattern of allJsPatterns) {
                 let jsMatch;
                 while ((jsMatch = jsPattern.exec(xmlContent)) !== null) {
                     const varName = jsMatch[1];
                     const operation = jsMatch[0].includes('Get') ? 'Get' : 'Set';
+                    console.log(`Found inline JS ${operation}Var reference to variable: "${varName}" in ${fileName}`);
                     
                     const variable = variables.find(v => v.variableName === varName);
                     if (variable) {
-                        const jsUsageInfo = `JavaScript ${operation}Var in ${fileName}`;
+                        const sceneSlideInfo = extractSceneSlideInfo(xmlContent, jsMatch.index, fileName, sceneSlideMap);
+                        const jsUsageInfo = `${sceneSlideInfo} (${operation}Var)`;
                         if (!variable.jsUsage.includes(jsUsageInfo)) {
                             variable.jsUsage.push(jsUsageInfo);
+                            console.log(`✅ Added ${varName} inline JavaScript usage: ${jsUsageInfo}`);
                         }
+                    } else {
+                        console.log(`⚠️ Inline variable "${varName}" not found in list`);
                     }
                 }
             }
         };
 
-        // Map story.xml dataType to standard types
+        // Map story.xml dataType to our standard types
         const mapStoryDataType = (storyDataType) => {
             switch (storyDataType.toLowerCase()) {
                 case 'text': return 'Text';
@@ -215,280 +566,2040 @@ XML PARSING ASSUMPTIONS:
             }
         };
         
-        // Main App Component
-        const App = () => {
-            const [variables, setVariables] = useState([]);
-            const [currentView, setCurrentView] = useState('upload');
-            const [isProcessing, setIsProcessing] = useState(false);
-            const [filters, setFilters] = useState({
-                variableName: '',
-                dataType: '',
-                scope: ''
-            });
-
-            // File upload handler
-            const handleFileUpload = async (files) => {
-                setIsProcessing(true);
-                try {
-                    const file = files[0];
-                    if (!file.name.endsWith('.story')) {
-                        throw new Error('Please select a .story file');
-                    }
-
-                    const extractedVariables = await parseStoryFile(file);
-                    setVariables(extractedVariables);
-                    setCurrentView('explorer');
+        
+        // Extract variables from XML content - focus on Variables section only
+        const extractVariablesFromXML = (xmlContent, fileName) => {
+            const variables = [];
+            
+            try {
+                // Look specifically for the <Variables> section
+                const variablesSectionMatch = xmlContent.match(/<Variables[^>]*>([\s\S]*?)<\/Variables>/gi);
+                
+                if (variablesSectionMatch) {
+                    console.log(`Found Variables section in ${fileName}`);
                     
-                } catch (error) {
-                    console.error('Error processing file:', error);
-                    alert(`Error: ${error.message}`);
-                } finally {
-                    setIsProcessing(false);
+                    for (const section of variablesSectionMatch) {
+                        // Extract individual Variable elements from within the Variables section
+                        const varPattern = /<Variable[^>]*Name="([^"]+)"[^>]*Type="([^"]+)"[^>]*(?:DefaultValue="([^"]*)")?[^>]*(?:UseCount="([^"]*)")?[^>]*\/?>(?:[\s\S]*?<\/Variable>)?/gi;
+                        
+                        let match;
+                        while ((match = varPattern.exec(section)) !== null) {
+                            const varName = match[1];
+                            const varType = match[2];
+                            const defaultVal = match[3] || '';
+                            const useCount = match[4] || '0';
+                            
+                            console.log(`Variables section found: ${varName}, type: ${varType}, default: ${defaultVal}`);
+                            
+                            // Only include actual variable names (not UI states or system attributes)
+                            if (varName && 
+                                varName.length >= 2 && 
+                                varName.length <= 50 &&
+                                /^[A-Za-z][A-Za-z0-9_]*$/.test(varName) && // Valid variable name format
+                                !['true', 'false', 'normal', 'hover', 'pressed', 'disabled', 'selected', 'visible', 'hidden'].includes(varName.toLowerCase())) {
+                                
+                                variables.push({
+                                    variableName: varName,
+                                    dataType: mapDataType(varType),
+                                    defaultValue: defaultVal,
+                                    scope: determineScope(varName, '', fileName),
+                                    usageLocations: [],
+                                    jsUsage: [],
+                                    description: '',
+                                    tags: '',
+                                    owner: '',
+                                    definedIn: fileName,
+                                    internalId: extractInternalId(xmlContent, varName),
+                                    useCount: parseInt(useCount) || 0
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    console.log(`No Variables section found in ${fileName}`);
                 }
-            };
+                
+                // Find slide/trigger usage patterns
+                const usagePatterns = [
+                    /<trigger[^>]*>[\s\S]*?variable[\s\S]*?name="([^"]+)"[\s\S]*?<\/trigger>/gi,
+                    /<condition[^>]*variable="([^"]+)"/gi,
+                    /<action[^>]*variable="([^"]+)"/gi,
+                    /variableName="([^"]+)"/gi,
+                    /<AdjustVariable[^>]*Variable="([^"]+)"/gi,
+                    /<ShowLayer[^>]*Condition[^>]*Variable="([^"]+)"/gi
+                ];
+                
+                for (const pattern of usagePatterns) {
+                    let match;
+                    while ((match = pattern.exec(xmlContent)) !== null) {
+                        const varName = match[1];
+                        const slideInfo = extractSlideContext(xmlContent, match.index);
+                        
+                        let existingVar = variables.find(v => v.variableName === varName);
+                        if (!existingVar) {
+                            // Debug: Log what we're actually finding
+                            console.log('Raw XML content sample:', xmlContent.substring(0, 2000));
+                            console.log('Looking for Variables sections...');
+            
+                            // If no proper variables found, show debug info
+                            if (variables.length === 0) {
+                                alert('No Storyline variables found. This .story file may use a different format. Check browser console for XML structure details.');
+                            }    
+                            // Create variable if found in usage but not in definitions
+                            existingVar = {
+                                variableName: varName,
+                                dataType: 'Unknown',
+                                defaultValue: '',
+                                scope: 'User',
+                                usageLocations: [],
+                                jsUsage: [],
+                                description: 'Found in usage only',
+                                tags: 'usage-only',
+                                owner: '',
+                                definedIn: fileName,
+                                internalId: ''
+                            };
+                            variables.push(existingVar);
+                        }
+                        
+                        const usageLocation = `Referenced by "${slideInfo.object}" on "${slideInfo.slide}" in "${slideInfo.scene}"`;
+                        if (!existingVar.usageLocations.includes(usageLocation)) {
+                            existingVar.usageLocations.push(usageLocation);
+                        }
+                    }
+                }
+                
+                // NOTE: JavaScript detection (GetVar/SetVar) is handled separately in findVariableUsageByIds function
+                // This function only handles slide content variable extraction from Variables section
+                
+                // Text box variable references using %VarName% pattern - only process slide XML files
+                if (fileName.includes('/slides/') && fileName.endsWith('.xml')) {
+                    const textBoxVarPattern = /%([^%]+)%/gi;
+                    let textBoxMatch;
+                    while ((textBoxMatch = textBoxVarPattern.exec(xmlContent)) !== null) {
+                        const varName = textBoxMatch[1];
+                        
+                        let existingVar = variables.find(v => v.variableName === varName);
+                        if (!existingVar) {
+                            existingVar = {
+                                variableName: varName,
+                                dataType: 'Text',
+                                defaultValue: '',
+                                scope: 'User',
+                                usageLocations: [],
+                                jsUsage: [],
+                                description: 'Found in text box reference',
+                                tags: 'textbox-reference',
+                                owner: '',
+                                definedIn: fileName,
+                                internalId: ''
+                            };
+                            variables.push(existingVar);
+                        }
+                        
+                        // Find the text box context around this variable reference
+                        const textBoxInfo = findTextBoxContext(xmlContent, textBoxMatch.index);
+                        
+                        // Debug: Log what we found
+                        console.log(`Processing %${varName}% in ${fileName}`);
+                        console.log(`Text box info:`, textBoxInfo);
+                        
+                        // Get slide title from XML content - try multiple approaches
+                        let slideTitle = 'Unknown Slide';
+                        
+                        // Try to extract from filename first (slide2.xml -> slide 2)
+                        const fileMatch = fileName.match(/slide(\d+)\.xml$/i);
+                        if (fileMatch) {
+                            slideTitle = `Slide ${fileMatch[1]}`;
+                        }
+                        
+                        // Try to get actual slide title from XML
+                        const slideTitlePatterns = [
+                            /<slide[^>]*title="([^"]+)"/i,
+                            /<slide[^>]*name="([^"]+)"/i,
+                            /title="([^"]+)"/i,
+                            /name="([^"]+)"/i
+                        ];
+                        
+                        for (const pattern of slideTitlePatterns) {
+                            const match = xmlContent.match(pattern);
+                            if (match && match[1] && !match[1].match(/^[0-9a-f-]{8,}/i) && match[1] !== 'CalcyError') {
+                                slideTitle = match[1];
+                                console.log(`Found slide title: "${slideTitle}" using pattern: ${pattern}`);
+                                break;
+                            }
+                        }
+                        
+                        // Get scene name - assume "Calcy AI" for now since that's working
+                        let sceneName = 'Calcy AI';
+                        
+                        // This goes to slideUsage (not usageLocations) - slide usage is for %VarName% references
+                        const slideUsageLocation = `Referenced by ${textBoxInfo.objectName} on "${slideTitle}" in "${sceneName}"`;
+                        if (!existingVar.slideUsage) {
+                            existingVar.slideUsage = [];
+                        }
+                        if (!existingVar.slideUsage.includes(slideUsageLocation)) {
+                            existingVar.slideUsage.push(slideUsageLocation);
+                            console.log(`Added slide usage: ${slideUsageLocation}`);
+                        }
+                    }
+                }
+                
+            } catch (error) {
+                console.log(`Error parsing XML from ${fileName}:`, error.message);
+            }
+            
+            return variables;
+        };
+        
+        // Find text box context for %VarName% references using DOM parsing
+        const findTextBoxContext = (xmlContent, position) => {
+            try {
+                console.log(`Finding text box context at position ${position}`);
+                
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
+                
+                // Check for parsing errors
+                const parseError = xmlDoc.querySelector('parsererror');
+                if (parseError) {
+                    console.log(`XML parsing error:`, parseError.textContent);
+                    return { objectName: 'Unknown Object', id: null, name: null };
+                }
+                
+                // Find all text-containing elements that might have variables
+                const textElements = xmlDoc.querySelectorAll('textbox, text, shape, button, object, *[name], *[title]');
+                
+                let bestMatch = null;
+                let bestDistance = Infinity;
+                
+                // Find the element closest to our variable reference position
+                for (const element of textElements) {
+                    const elementText = element.textContent || element.innerHTML || '';
+                    if (elementText.includes('%')) {
+                        // This element contains variable references
+                        const name = element.getAttribute('name') || element.getAttribute('title');
+                        const id = element.getAttribute('id');
+                        const type = element.tagName.toLowerCase();
+                        
+                        // Calculate approximate distance (rough estimate)
+                        const elementPosition = xmlContent.indexOf(element.outerHTML || element.toString());
+                        if (elementPosition >= 0) {
+                            const distance = Math.abs(position - elementPosition);
+                            if (distance < bestDistance) {
+                                bestDistance = distance;
+                                bestMatch = { name, id, type };
+                            }
+                        }
+                    }
+                }
+                
+                // Format the object name
+                let objectName = 'Unknown Object';
+                if (bestMatch) {
+                    const { name, id, type } = bestMatch;
+                    
+                    if (name && !name.match(/^[0-9a-f-]{8,}/i) && !name.startsWith('Calcy')) {
+                        objectName = id ? `${name} - ${id}` : name;
+                    } else if (id && id.match(/^[0-9]+$/)) {
+                        objectName = `Text Box - ${id}`;
+                    } else if (name) {
+                        objectName = name;
+                    }
+                    
+                    console.log(`Found text box: type="${type}", name="${name}", id="${id}" -> "${objectName}"`);
+                }
+                
+                return {
+                    objectName: objectName,
+                    id: bestMatch?.id,
+                    name: bestMatch?.name
+                };
+                
+            } catch (error) {
+                console.log(`Error finding text box context:`, error.message);
+                return { objectName: 'Unknown Object', id: null, name: null };
+            }
+        };
 
-            // Export to CSV
-            const exportToCSV = () => {
-                const headers = ['Variable Name', 'Data Type', 'Default Value', 'Scope', 'Slide Usage', 'JS Usage'];
-                const rows = variables.map(v => [
-                    v.variableName,
-                    v.dataType,
-                    v.defaultValue,
-                    v.scope,
-                    v.slideUsage.join('; '),
-                    v.jsUsage.join('; ')
-                ]);
-                
-                const csvContent = [headers, ...rows]
-                    .map(row => row.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
-                    .join('\n');
-                
-                const blob = new Blob([csvContent], { type: 'text/csv' });
+        // Determine if variable is builtin or user-defined
+        const determineScope = (varName, xmlScope, fileName) => {
+            // Storyline builtin/system variables
+            const builtinVars = [
+                'player.currentframe', 'player.currentslide', 'player.currentscene',
+                'player.slidecount', 'player.scenecount', 'player.totalslides',
+                'player.username', 'player.userid', 'player.suspenddata',
+                'player.bookmarkdata', 'player.exitcourse', 'player.passfail',
+                'player.score', 'player.maxscore', 'player.minscore',
+                'system.date', 'system.time', 'system.datetime'
+            ];
+            
+            const lowerVarName = varName.toLowerCase();
+            
+            // Check various indicators of builtin variables
+            if (builtinVars.some(builtin => lowerVarName === builtin.toLowerCase()) ||
+                lowerVarName.startsWith('player.') || 
+                lowerVarName.startsWith('system.') ||
+                xmlScope?.toLowerCase().includes('system') ||
+                xmlScope?.toLowerCase().includes('builtin') ||
+                fileName?.toLowerCase().includes('system')) {
+                return 'Builtin';
+            }
+            
+            return 'User';
+        };
+        
+        // Extract slide/scene context from XML
+        const extractSlideContext = (xmlContent, position) => {
+            const beforeContent = xmlContent.substring(Math.max(0, position - 5000), position);
+            const afterContent = xmlContent.substring(position, position + 2000);
+            
+            // Enhanced patterns to match Storyline's XML structure more accurately
+            const slidePatterns = [
+                /<slide[^>]*(?:name|title|Name|Title)="([^"]+)"/i,
+                /<Slide[^>]*(?:Name|Title)="([^"]+)"/i,
+                /<SlideLayer[^>]*(?:Name|Title)="([^"]+)"/i,
+                /<layer[^>]*(?:name|title)="([^"]+)"/i
+            ];
+            
+            const scenePatterns = [
+                /<scene[^>]*(?:name|title|Name|Title)="([^"]+)"/i,
+                /<Scene[^>]*(?:Name|Title)="([^"]+)"/i,
+                /<Chapter[^>]*(?:Name|Title)="([^"]+)"/i
+            ];
+            
+            const objectPatterns = [
+                /<object[^>]*(?:name|id|Name|Id)="([^"]+)"/i,
+                /<Object[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<TextBox[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<Button[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<Table[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<Shape[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<Image[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<Video[^>]*(?:Name|Id)="([^"]+)"/i,
+                /<Audio[^>]*(?:Name|Id)="([^"]+)"/i
+            ];
+            
+            // Find matches using multiple patterns
+            let slideMatch = null;
+            for (const pattern of slidePatterns) {
+                slideMatch = beforeContent.match(pattern) || afterContent.match(pattern);
+                if (slideMatch) break;
+            }
+            
+            let sceneMatch = null;
+            for (const pattern of scenePatterns) {
+                sceneMatch = beforeContent.match(pattern) || afterContent.match(pattern);
+                if (sceneMatch) break;
+            }
+            
+            let objectMatch = null;
+            for (const pattern of objectPatterns) {
+                objectMatch = beforeContent.match(pattern);
+                if (objectMatch) break;
+            }
+            
+            // Clean up object names - remove technical IDs and keep readable names
+            let objectName = objectMatch ? objectMatch[1] : 'Unknown Object';
+            if (objectName.match(/^[0-9a-f-]{8,}/i)) {
+                // If it's a GUID-like ID, try to find a more readable name nearby
+                const nameMatch = beforeContent.match(/(?:name|title|Name|Title)="([^"]+)"/i);
+                if (nameMatch && !nameMatch[1].match(/^[0-9a-f-]{8,}/i)) {
+                    objectName = nameMatch[1];
+                }
+            }
+            
+            return {
+                scene: sceneMatch ? sceneMatch[1] : 'Unknown Scene',
+                slide: slideMatch ? slideMatch[1] : 'Unknown Slide', 
+                object: objectName,
+                triggerType: 'Trigger',
+                operation: 'Reference'
+            };
+        };
+        
+        // Extract internal ID
+        const extractInternalId = (xmlContent, varName) => {
+            const patterns = [
+                new RegExp(`name="${varName}"[^>]*id="([^"]+)"`, 'i'),
+                new RegExp(`Name="${varName}"[^>]*Id="([^"]+)"`, 'i'),
+                new RegExp(`variable="${varName}"[^>]*id="([^"]+)"`, 'i')
+            ];
+            
+            for (const pattern of patterns) {
+                const match = xmlContent.match(pattern);
+                if (match) return match[1];
+            }
+            return '';
+        };
+        
+        // Map Storyline data types to our standard types
+        const mapDataType = (storylineType) => {
+            if (!storylineType) return 'Text';
+            
+            const type = storylineType.toLowerCase();
+            
+            // Common Storyline data types
+            if (type === 'text' || type === 'string' || type.includes('text')) return 'Text';
+            if (type === 'number' || type === 'numeric' || type.includes('number')) return 'Number';
+            if (type === 'boolean' || type === 'bool' || type === 'truefalse' || type === 'true/false') return 'True/False';
+            
+            // Storyline-specific types
+            if (type === 'tf' || type === 't/f') return 'True/False';
+            if (type === 'num') return 'Number';
+            if (type === 'str') return 'Text';
+            
+            // Return cleaned original type if we can't map it
+            return storylineType.charAt(0).toUpperCase() + storylineType.slice(1).toLowerCase();
+        };
+        
+        // CSV folder memory utilities
+        const getCSVFolderHandle = () => {
+            return window.lastUsedCSVFolderHandle || null;
+        };
+        
+        const setCSVFolderHandle = (handle) => {
+            window.lastUsedCSVFolderHandle = handle;
+        };
+
+        // Export to CSV with Save As dialog and folder memory
+        const exportToCSV = async (variables) => {
+            const headers = [
+                'Variable Name', 'Data Type', 'Default Value', 'Random Min', 'Random Max', 
+                'Scope', 'Internal ID', 'Version ID', 'Slide Usage', 'JS Usage', 
+                'Description', 'Tags', 'Owner'
+            ];
+            
+            const rows = variables.map(variable => [
+                variable.variableName,
+                variable.dataType,
+                variable.defaultValue,
+                variable.randomMin || '',
+                variable.randomMax || '',
+                variable.scope,
+                variable.internalId || '',
+                variable.versionId || '',
+                variable.slideUsage.join('; '),
+                variable.jsUsage.join('; '),
+                variable.description || '',
+                variable.tags || '',
+                variable.owner || ''
+            ]);
+            
+            const csvContent = [headers, ...rows]
+                .map(row => row.map(field => `"${field}"`).join(','))
+                .join('\n');
+            
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            
+            // Try to use the File System Access API for Save As dialog
+            if (window.showSaveFilePicker) {
+                try {
+                    const options = {
+                        suggestedName: 'storyline_variables.csv',
+                        types: [{
+                            description: 'CSV files',
+                            accept: { 'text/csv': ['.csv'] }
+                        }]
+                    };
+                    
+                    // Use remembered CSV folder if available
+                    const csvFolderHandle = getCSVFolderHandle();
+                    if (csvFolderHandle) {
+                        options.startIn = csvFolderHandle;
+                    }
+                    
+                    const fileHandle = await window.showSaveFilePicker(options);
+                    
+                    // Remember the CSV folder for next time
+                    if (fileHandle.getParent) {
+                        const parentHandle = await fileHandle.getParent();
+                        setCSVFolderHandle(parentHandle);
+                    }
+                    
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    
+                    console.log('CSV file saved successfully');
+                    return true;
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        console.warn('Save picker failed, falling back to download:', err);
+                        downloadFallback();
+                    }
+                    return false;
+                }
+            } else {
+                downloadFallback();
+                return true;
+            }
+            
+            function downloadFallback() {
                 const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'storyline-variables.csv';
-                a.click();
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'storyline_variables.csv';
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
                 URL.revokeObjectURL(url);
-            };
+            }
+        };
+        
+        // Merge variables from new Storyline file with existing CSV data
+        const mergeVariables = (newStorylineVariables, existingCsvVariables) => {
+            console.log('Merging variables:', newStorylineVariables.length, 'from Storyline,', existingCsvVariables.length, 'from CSV');
+            
+            const merged = [];
+            const existingByName = new Map();
+            
+            // Index existing CSV variables by name for fast lookup
+            existingCsvVariables.forEach(variable => {
+                existingByName.set(variable.variableName, variable);
+            });
+            
+            // Process each variable from the new Storyline file
+            newStorylineVariables.forEach(newVar => {
+                const existing = existingByName.get(newVar.variableName);
+                
+                if (existing) {
+                    // Variable exists in CSV - preserve user-added data, update Storyline data
+                    merged.push({
+                        ...newVar, // Use new Storyline data (dataType, defaultValue, scope, etc.)
+                        description: existing.description || '', // Preserve user description
+                        tags: existing.tags || '', // Preserve user tags
+                        owner: existing.owner || '', // Preserve user owner
+                    });
+                    console.log(`Updated existing variable: ${newVar.variableName}`);
+                } else {
+                    // New variable from Storyline - add with empty user fields
+                    merged.push({
+                        ...newVar,
+                        description: '',
+                        tags: '',
+                        owner: ''
+                    });
+                    console.log(`Added new variable: ${newVar.variableName}`);
+                }
+            });
+            
+            // Log removed variables (existed in CSV but not in new Storyline)
+            existingCsvVariables.forEach(csvVar => {
+                const stillExists = newStorylineVariables.find(newVar => newVar.variableName === csvVar.variableName);
+                if (!stillExists) {
+                    console.log(`Removed variable (no longer in Storyline): ${csvVar.variableName}`);
+                }
+            });
+            
+            console.log(`Merge complete: ${merged.length} variables`);
+            return merged;
+        };
+        
+        // Update from Storyline - merge new .story file with existing CSV data
+        const updateFromStoryline = async (newStoryFile, existingVariables) => {
+            try {
+                console.log('Updating from new Storyline file...');
+                const newVariables = await parseStoryFile(newStoryFile);
+                const mergedVariables = mergeVariables(newVariables, existingVariables);
+                
+                return {
+                    variables: mergedVariables,
+                    stats: {
+                        total: mergedVariables.length,
+                        added: mergedVariables.filter(v => !existingVariables.find(e => e.variableName === v.variableName)).length,
+                        updated: mergedVariables.filter(v => existingVariables.find(e => e.variableName === v.variableName)).length,
+                        removed: existingVariables.filter(e => !mergedVariables.find(v => v.variableName === e.variableName)).length
+                    }
+                };
+            } catch (error) {
+                console.error('Error updating from Storyline:', error);
+                throw error;
+            }
+        };
+        
+        const parseCSV = (csvText) => {
+            const lines = csvText.split('\n').filter(line => line.trim());
+            if (lines.length < 2) return [];
+            
+            console.log('Parsing CSV with', lines.length, 'lines');
+            const variables = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                const values = [];
+                let current = '';
+                let inQuotes = false;
+                
+                for (let j = 0; j < lines[i].length; j++) {
+                    const char = lines[i][j];
+                    if (char === '"') {
+                        if (j < lines[i].length - 1 && lines[i][j + 1] === '"') {
+                            // Handle escaped quotes ""
+                            current += '"';
+                            j++; // Skip next quote
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (char === ',' && !inQuotes) {
+                        values.push(current.replace(/^"|"$/g, '').trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                values.push(current.replace(/^"|"$/g, '').trim());
+                
+                console.log(`Row ${i}: ${values.length} values:`, values.slice(0, 3));
+                
+                if (values.length >= 10 && values[0]) { // At least variable name
+                    variables.push({
+                        variableName: values[0] || '',
+                        dataType: values[1] || 'Text',
+                        defaultValue: values[2] || '',
+                        randomMin: values[3] || '',
+                        randomMax: values[4] || '',
+                        scope: values[5] || 'User',
+                        internalId: values[6] || '',
+                        versionId: values[7] || '',
+                        slideUsage: values[8] ? values[8].split('; ').filter(u => u.trim()) : [],
+                        jsUsage: values[9] ? values[9].split('; ').filter(u => u.trim()) : [],
+                        description: values[10] || '',
+                        tags: values[11] || '',
+                        owner: values[12] || '',
+                        useCount: 0
+                    });
+                }
+            }
+            
+            console.log('Successfully parsed', variables.length, 'variables from CSV');
+            return variables;
+        };
 
-            // Filter variables
-            const filteredVariables = variables.filter(variable => {
-                return Object.entries(filters).every(([key, filterValue]) => {
-                    if (!filterValue) return true;
-                    const variableValue = variable[key] || '';
-                    return variableValue.toLowerCase().includes(filterValue.toLowerCase());
+        // Sync variables back to Storyline .story file
+        const syncToStoryline = async (variables, originalFile) => {
+            try {
+                console.log('Starting sync to Storyline file...');
+                
+                // Validate inputs
+                if (!originalFile) {
+                    throw new Error('No original file provided');
+                }
+                if (!variables || !Array.isArray(variables)) {
+                    throw new Error('Invalid variables data provided');
+                }
+                
+                const zip = new JSZip();
+                const contents = await zip.loadAsync(originalFile);
+                
+                // Find story.xml
+                const storyXmlFile = Object.keys(contents.files).find(f => f.includes('story.xml'));
+                if (!storyXmlFile) {
+                    throw new Error('story.xml not found in .story file');
+                }
+                
+                let storyContent = await contents.files[storyXmlFile].async('text');
+                console.log('Original story.xml length:', storyContent.length);
+                console.log('Variables to sync:', variables.length);
+                console.log('Sample variable:', variables[0]);
+                
+                // Update variables in story.xml
+                const updatedStoryContent = updateStoryVariables(storyContent, variables);
+                console.log('Updated story.xml length:', updatedStoryContent.length);
+                console.log('Updated content preview:', updatedStoryContent.substring(0, 1000));
+                
+                // Replace the story.xml content in the ZIP
+                zip.file(storyXmlFile, updatedStoryContent);
+                
+                // Copy all other files from original ZIP
+                for (const [filename, file] of Object.entries(contents.files)) {
+                    if (filename !== storyXmlFile && !file.dir) {
+                        const fileData = await file.async('arraybuffer');
+                        zip.file(filename, fileData);
+                    }
+                }
+                
+                // Generate new .story file
+                const blob = await zip.generateAsync({type: 'blob'});
+                
+                // Create filename with _updated suffix
+                const originalName = originalFile.name || 'storyline.story';
+                const baseName = originalName.replace(/\.story$/i, '');
+                const updatedFileName = `${baseName}_updated.story`;
+                
+                // Download the updated file
+                if (window.showSaveFilePicker) {
+                    try {
+                        const fileHandle = await window.showSaveFilePicker({
+                            suggestedName: updatedFileName,
+                            types: [{
+                                description: 'Storyline files',
+                                accept: { 'application/octet-stream': ['.story'] }
+                            }]
+                        });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        console.log('Storyline file saved successfully');
+                        return true;
+                    } catch (err) {
+                        if (err.name !== 'AbortError') {
+                            console.warn('Save picker failed, falling back to download:', err);
+                        } else {
+                            return false; // User cancelled
+                        }
+                    }
+                }
+                
+                // Fallback: direct download
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = updatedFileName;
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                
+                console.log('Storyline file downloaded successfully');
+                return true;
+                
+            } catch (error) {
+                console.error('Error syncing to Storyline:', error);
+                throw error;
+            }
+        };
+        
+        // Update variables in story.xml content
+        const updateStoryVariables = (storyContent, variables) => {
+            console.log('=== UPDATING VARIABLES IN STORY.XML ===');
+            console.log('Variables to update:', variables.length);
+            
+            // Validate inputs
+            if (!storyContent || typeof storyContent !== 'string') {
+                throw new Error('Invalid story content provided');
+            }
+            if (!variables || !Array.isArray(variables)) {
+                throw new Error('Invalid variables array provided');
+            }
+            
+            // Log each variable being processed
+            variables.forEach((variable, index) => {
+                console.log(`Variable ${index + 1}:`, {
+                    name: variable.variableName,
+                    type: variable.dataType,
+                    default: variable.defaultValue,
+                    internalId: variable.internalId,
+                    versionId: variable.versionId,
+                    scope: variable.scope
                 });
             });
+            
+            // Look for existing varLst section (same as extraction methodology)
+            let varSectionPattern = /<varLst[^>]*>([\s\S]*?)<\/varLst>/i;
+            let varSectionMatch = storyContent.match(varSectionPattern);
+            
+            if (!varSectionMatch) {
+                console.log('Trying alternative <varLst> patterns...');
+                
+                // Try self-closing varLst tag
+                varSectionPattern = /<varLst[^>]*\/>/i;
+                varSectionMatch = storyContent.match(varSectionPattern);
+                
+                if (varSectionMatch) {
+                    console.log('Found self-closing <varLst/> tag');
+                } else {
+                    console.log('No <varLst> section found, checking story content preview...');
+                    console.log('Story content preview (first 1000 chars):', storyContent.substring(0, 1000));
+                }
+            }
+            
+            if (!varSectionMatch) {
+                console.warn('No <varLst> section found in story.xml');
+                return storyContent;
+            }
+            
+            console.log('Found <varLst> section:', varSectionMatch[0].substring(0, 200));
+            
+            // Extract existing variables from the varLst section - handle nested/malformed vars
+            const varLstContent = varSectionMatch[0];
+            console.log('Raw varLst content length:', varLstContent.length);
+            
+            // Parse XML properly to handle nested/malformed structure
+            const parser = new DOMParser();
+            const tempDoc = parser.parseFromString(`<root>${varLstContent}</root>`, 'text/xml');
+            const varElements = tempDoc.querySelectorAll('var');
+            
+            const existingVars = new Map();
+            
+            varElements.forEach((varElement, index) => {
+                const varName = varElement.getAttribute('name');
+                if (varName) {
+                    // Get all attributes
+                    const attrs = Array.from(varElement.attributes)
+                        .map(attr => `${attr.name}="${attr.value}"`)
+                        .join(' ');
+                    
+                    // Check if it has inner content
+                    const hasInnerContent = varElement.children.length > 0 || varElement.textContent.trim();
+                    const innerContent = hasInnerContent ? varElement.innerHTML : '';
+                    
+                    const fullVarXml = hasInnerContent ? 
+                        `<var ${attrs}>${innerContent}</var>` : 
+                        `<var ${attrs} />`;
+                    
+                    existingVars.set(varName, {
+                        xml: fullVarXml,
+                        attributes: attrs,
+                        innerContent: innerContent,
+                        isSelfClosing: !hasInnerContent
+                    });
+                    
+                    console.log(`Found existing variable ${index + 1}: ${varName} (${hasInnerContent ? 'with content' : 'self-closing'})`);
+                }
+            });
+            
+            console.log('Existing variables count:', existingVars.size);
+            console.log('New variables count:', variables.length);
+            
+            // Merge existing and new variables
+            const allVarsXml = [];
+            
+            // Add existing variables - update if modified, preserve if unchanged
+            for (const [varName, varData] of existingVars) {
+                const updatedVariable = variables.find(v => v.variableName === varName);
+                
+                if (updatedVariable && updatedVariable.scope === 'User') {
+                    // This user variable was modified - generate updated XML preserving original format
+                    console.log(`Updating existing user variable: ${varName}`);
+                    
+                    const dataType = updatedVariable.dataType?.toLowerCase() === 'text' ? 'text' :
+                                   updatedVariable.dataType?.toLowerCase() === 'number' ? 'num' :
+                                   updatedVariable.dataType?.toLowerCase() === 'true/false' ? 'bool' : 'text';
+                    
+                    // Rebuild XML with updated values but preserve original structure
+                    const varElement = tempDoc.querySelector(`var[name="${varName}"]`);
+                    if (varElement) {
+                        varElement.setAttribute('val', updatedVariable.defaultValue || '');
+                        varElement.setAttribute('dataType', dataType);
+                        if (updatedVariable.randomMin) varElement.setAttribute('randomMin', updatedVariable.randomMin);
+                        if (updatedVariable.randomMax) varElement.setAttribute('randomMax', updatedVariable.randomMax);
+                        
+                        const hasInnerContent = varElement.children.length > 0 || varElement.textContent.trim();
+                        const attrs = Array.from(varElement.attributes)
+                            .map(attr => `${attr.name}="${attr.value}"`)
+                            .join(' ');
+                        
+                        // Only include localizedValue for text variables
+                        let innerContent = varElement.innerHTML;
+                        if (dataType === 'text' && !innerContent.includes('localizedValue')) {
+                            innerContent = '<localizedValue />';
+                        } else if (dataType !== 'text' && innerContent.includes('localizedValue')) {
+                            // Remove localizedValue for non-text variables
+                            innerContent = innerContent.replace(/<localizedValue[^>]*\/?>/g, '').trim();
+                        }
+                        
+                        const varXml = innerContent ? 
+                            `<var ${attrs}>${innerContent}</var>` :
+                            `<var ${attrs} />`;
+                        
+                        allVarsXml.push(varXml);
+                        console.log(`Updated variable XML:`, varXml);
+                    }
+                } else {
+                    // Preserve unchanged variable exactly as is
+                    allVarsXml.push(varData.xml);
+                    console.log(`Preserving existing variable: ${varName}`);
+                }
+            }
+            
+            // Add NEW user variables that don't already exist
+            variables.forEach((variable, index) => {
+                if (!variable || typeof variable !== 'object') {
+                    console.warn('Skipping invalid variable:', variable);
+                    return;
+                }
+                
+                const variableName = variable.variableName || 'UnnamedVariable';
+                const variableScope = variable.scope || 'User';
+                
+                // ONLY process User variables, skip builtIn ones
+                if (variableScope !== 'User') {
+                    console.log(`Skipping non-user variable: ${variableName} (scope: ${variableScope})`);
+                    return;
+                }
+                
+                // Only add if it doesn't already exist (existing ones were handled above)
+                if (existingVars.has(variableName)) {
+                    console.log(`Variable ${variableName} already processed above`);
+                    return;
+                }
+                
+                const internalId = variable.internalId || 'unknown';
+                const versionId = variable.versionId || 'unknown';
+                const defaultValue = variable.defaultValue || '';
+                
+                // Convert dataType to match Storyline XML format (lowercase)
+                const dataType = variable.dataType?.toLowerCase() === 'text' ? 'text' :
+                               variable.dataType?.toLowerCase() === 'number' ? 'num' :
+                               variable.dataType?.toLowerCase() === 'true/false' ? 'bool' : 'text';
+                
+                // Build attributes matching original format for User variables
+                const attrs = [
+                    `g="${internalId}"`,
+                    `verG="${versionId}"`,
+                    `name="${variableName}"`,
+                    `dataType="${dataType}"`,
+                    `val="${defaultValue}"`,
+                    `type="user"`,
+                    `propPath=""`,
+                    `isRandom="false"`,
+                    `randomMin="${variable.randomMin || '0'}"`,
+                    `randomMax="${variable.randomMax || '0'}"`,
+                    `defaultEmptyIfZero="false"`
+                ];
+                
+                // Include <localizedValue /> only for text variables
+                const innerContent = dataType === 'text' ? '<localizedValue />' : '';
+                const varXml = innerContent ? 
+                    `<var ${attrs.join(' ')}>${innerContent}</var>` :
+                    `<var ${attrs.join(' ')} />`;
+                allVarsXml.push(varXml);
+                
+                console.log(`Added new variable: ${variableName}`);
+                console.log(`Generated XML:`, varXml);
+            });
+            
+            // Replace the varLst section with merged variables - preserve original format
+            const newVarsSection = `<varLst>${allVarsXml.join('')}</varLst>`;
+            
+            // Validate the generated XML before applying changes
+            console.log('=== XML VALIDATION ===');
+            try {
+                const testParser = new DOMParser();
+                const testDoc = testParser.parseFromString(`<root>${newVarsSection}</root>`, 'text/xml');
+                const parseError = testDoc.querySelector('parsererror');
+                
+                if (parseError) {
+                    console.error('XML validation failed:', parseError.textContent);
+                    console.error('Generated varLst section:', newVarsSection);
+                    throw new Error('Generated XML is malformed: ' + parseError.textContent);
+                }
+                
+                const varCount = testDoc.querySelectorAll('var').length;
+                console.log(`XML validation passed: ${varCount} variables in well-formed XML`);
+                
+                // Show first few variables for debugging
+                console.log('First 3 variables in generated XML:');
+                allVarsXml.slice(0, 3).forEach((xml, i) => {
+                    console.log(`${i + 1}: ${xml}`);
+                });
+                
+                // Debug each variable individually
+                console.log('Checking each variable for XML issues:');
+                allVarsXml.forEach((xml, i) => {
+                    const openCount = (xml.match(/<var\s/g) || []).length;
+                    const closeCount = (xml.match(/<\/var>/g) || []).length;
+                    const selfCloseCount = (xml.match(/\/>/g) || []).length;
+                    
+                    console.log(`Variable ${i + 1}: open=${openCount}, close=${closeCount}, self=${selfCloseCount}`);
+                    
+                    if (openCount !== (closeCount + selfCloseCount)) {
+                        console.error(`MALFORMED Variable ${i + 1}:`, xml);
+                    }
+                });
+                
+                // Check total counts
+                const totalOpen = (newVarsSection.match(/<var\s/g) || []).length;
+                const totalClose = (newVarsSection.match(/<\/var>/g) || []).length;
+                const totalSelf = (newVarsSection.match(/<var[^>]*\/>/g) || []).length;
+                
+                console.log(`Total counts: open=${totalOpen}, close=${totalClose}, self=${totalSelf}`);
+                console.log(`Expected: ${totalOpen} should equal ${totalClose + totalSelf}`);
+                
+                if (totalOpen !== (totalClose + totalSelf)) {
+                    console.error('TOTAL TAG MISMATCH detected');
+                    console.error('Generated section preview:', newVarsSection.substring(0, 1000));
+                    throw new Error(`Tag mismatch: ${totalOpen} open vs ${totalClose + totalSelf} closed/self-closing`);
+                }
+                
+            } catch (error) {
+                console.error('XML validation error:', error);
+                throw new Error(`Generated XML is invalid: ${error.message}`);
+            }
+            
+            const updatedContent = storyContent.replace(varSectionPattern, newVarsSection);
+            console.log(`Final varLst contains ${allVarsXml.length} variables`);
+            
+            console.log(`Final varLst contains ${allVarsXml.length} variables`);
+            console.log('Variables section updated successfully');
+            return updatedContent;
+        };
 
-            // File drop component
-            const FileDropZone = ({ onDrop, isProcessing }) => {
-                const [isDragOver, setIsDragOver] = useState(false);
-
-                return (
-                    <div
+        // Simple Upload Component
+        const UploadView = ({ isProcessing, variables = [] }) => {
+            const [isDragOver, setIsDragOver] = useState(false);
+            const [selectedFile, setSelectedFile] = useState(null);
+            
+            // Calculate stats for display
+            const stats = {
+                total: variables.length,
+                user: variables.filter(v => v.scope === 'User').length,
+                builtIn: variables.filter(v => v.scope === 'builtIn').length
+            };
+            
+            const handleFileSelect = async (file) => {
+                setSelectedFile(file);
+                console.log('File selected:', file.name);
+                
+                // Store original file for sync functionality
+                window.originalStoryFile = file;
+                
+                if (!file.name.endsWith('.story')) {
+                    alert('Please select a .story file');
+                    return;
+                }
+                
+                try {
+                    console.log('Starting to parse file...');
+                    const variables = await parseStoryFile(file);
+                    console.log('Parsing complete, variables found:', variables);
+                    
+                    // Validate story structure against assumptions
+                    const zip = new JSZip();
+                    const contents = await zip.loadAsync(file);
+                    
+                    // Debug: List all files in the ZIP to see structure
+                    console.log('Files in .story archive:');
+                    Object.keys(contents.files).forEach(filename => {
+                        console.log(`- ${filename}`);
+                    });
+                    
+                    // Try different possible locations for story.xml
+                    let storyFile = contents.file('story.xml');
+                    if (!storyFile) {
+                        // Try case variations
+                        storyFile = contents.file('Story.xml') || contents.file('STORY.XML');
+                    }
+                    if (!storyFile) {
+                        // Try in subdirectories
+                        const storyFiles = Object.keys(contents.files).filter(name => 
+                            name.toLowerCase().includes('story.xml')
+                        );
+                        if (storyFiles.length > 0) {
+                            console.log('Found story file at:', storyFiles[0]);
+                            storyFile = contents.file(storyFiles[0]);
+                        }
+                    }
+                    
+                    if (!storyFile) {
+                        alert('Error: story.xml not found in .story file. Check console for file list. This may not be a valid Storyline file.');
+                        return;
+                    }
+                    
+                    const storyXml = await storyFile.async('text');
+                    const validation = validateStoryStructure(storyXml, variables);
+                    
+                    // Show validation results to user
+                    if (validation.errors.length > 0) {
+                        alert(`Story file validation errors:\n${validation.errors.join('\n')}\n\nThis file may not be compatible.`);
+                    }
+                    if (validation.warnings.length > 0) {
+                        const warningMsg = `Story file validation warnings:\n${validation.warnings.join('\n')}\n\nThe file will work but may have unexpected structure. Continue?`;
+                        if (!confirm(warningMsg)) {
+                            return;
+                        }
+                    }
+                    if (validation.warnings.length === 0 && validation.errors.length === 0) {
+                        console.log('✅ Story file structure matches all documented assumptions');
+                    }
+                    
+                    if (variables.length === 0) {
+                        alert('No variables found in this .story file. Check browser console for details.');
+                    } else {
+                        // Pass variables to parent component
+                        window.handleVariablesExtracted(variables);
+                    }
+                } catch (error) {
+                    console.error('Error parsing file:', error);
+                    alert(`Error parsing file: ${error.message}`);
+                }
+            };
+            
+            const handleFileInput = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    handleFileSelect(file);
+                }
+            };
+            
+            return (
+                <div className="max-w-2xl mx-auto p-6">
+                    <h2 className="text-2xl font-bold mb-6">Upload Storyline File</h2>
+                    <div 
                         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                            isDragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+                            isDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                         }`}
-                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-                        onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+                        onDragOver={(e) => {
+                            e.preventDefault();
+                            setIsDragOver(true);
+                        }}
+                        onDragLeave={() => setIsDragOver(false)}
                         onDrop={(e) => {
                             e.preventDefault();
                             setIsDragOver(false);
-                            onDrop(Array.from(e.dataTransfer.files));
+                            const file = e.dataTransfer.files[0];
+                            if (file) {
+                                handleFileSelect(file);
+                            }
                         }}
                     >
-                        {isProcessing ? (
-                            <div className="space-y-4">
-                                <div className="text-lg font-medium text-gray-700">Processing...</div>
-                                <div className="text-sm text-gray-500">Extracting variables from .story file</div>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <div className="text-lg font-medium text-gray-700">Drop your .story file here</div>
-                                <div className="text-sm text-gray-500">or click to browse</div>
-                                <input
-                                    type="file"
-                                    accept=".story"
-                                    onChange={(e) => onDrop(Array.from(e.target.files))}
-                                    className="hidden"
-                                    id="file-input"
-                                />
-                                <label htmlFor="file-input" className="btn-primary inline-block cursor-pointer">
-                                    Choose File
-                                </label>
+                        <div className="text-6xl mb-4">📁</div>
+                        <h3 className="text-lg font-semibold mb-2">Drop your .story file here</h3>
+                        <p className="text-gray-600 mb-4">or click to browse</p>
+                        <input 
+                            type="file" 
+                            accept=".story"
+                            onChange={handleFileInput}
+                            style={{ display: 'none' }}
+                            id="fileInput"
+                        />
+                        <button 
+                            className="btn-primary"
+                            onClick={() => document.getElementById('fileInput').click()}
+                        >
+                            Choose File
+                        </button>
+                        {selectedFile && (
+                            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                <p className="text-green-800 text-sm">
+                                    ✅ Selected: <strong>{selectedFile.name}</strong>
+                                </p>
                             </div>
                         )}
-                    </div>
-                );
-            };
-
-            // Upload view
-            const UploadView = ({ isProcessing, variables }) => (
-                <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="bg-white rounded-lg shadow p-6">
-                        <h2 className="text-lg font-medium text-gray-900 mb-4">
-                            Upload Storyline File
-                        </h2>
-                        <FileDropZone onDrop={handleFileUpload} isProcessing={isProcessing} />
-                        
-                        {variables.length > 0 && (
-                            <div className="mt-6 p-4 bg-green-50 rounded-lg">
-                                <p className="text-green-800">
-                                    ✅ Found {variables.length} variables. Switch to Explorer to view them.
+                        {isProcessing && (
+                            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <p className="text-blue-800 text-sm">
+                                    🔄 Processing file...
                                 </p>
                             </div>
                         )}
                     </div>
+                    
+                    <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                        <h4 className="font-semibold mb-2">Instructions:</h4>
+                        <div className="text-sm text-gray-600">
+                            Total: {stats.total} | User: {stats.user} | builtIn: {stats.builtIn}
+                        </div>
+                        <ul className="text-sm text-gray-600 space-y-1">
+                            <li>• Upload your Articulate Storyline .story file</li>
+                            <li>• Variables will be extracted and analyzed</li>
+                            <li>• Export to CSV or sync with existing data</li>
+                        </ul>
+                    </div>
                 </div>
             );
+        };
 
-            // Variables table
-            const VariablesTable = ({ variables, showFilters = true }) => {
-                const displayVariables = showFilters ? filteredVariables : variables;
+        // Variable Explorer Component
+        const VariableExplorer = ({ variables, onVariablesUpdate }) => {
+            const [filter, setFilter] = useState('all');
+            const [searchTerm, setSearchTerm] = useState('');
+            const [editingCell, setEditingCell] = useState(null);
+            const [editValue, setEditValue] = useState('');
+            
+            // Column filters state
+            const [columnFilters, setColumnFilters] = useState({
+                variableName: '',
+                dataType: '',
+                defaultValue: '',
+                randomMin: '',
+                randomMax: '',
+                scope: '',
+                internalId: '',
+                versionId: '',
+                slideUsage: '',
+                jsUsage: '',
+                description: '',
+                tags: '',
+                owner: ''
+            });
+
+            // Filter variables based on current filter and column filters
+            const filteredVariables = variables.filter(variable => {
+                // Global search
+                const matchesGlobalSearch = searchTerm === '' || 
+                    Object.values(variable).some(value => 
+                        String(value).toLowerCase().includes(searchTerm.toLowerCase())
+                    );
                 
-                return (
-                    <div className="bg-white rounded-lg shadow overflow-hidden">
-                        <div className="px-6 py-4 border-b border-gray-200">
-                            <div className="flex justify-between items-center">
-                                <h3 className="text-lg font-medium text-gray-900">
-                                    Variables ({displayVariables.length})
-                                </h3>
-                                <button onClick={exportToCSV} className="btn-primary">
-                                    Export CSV
+                // Scope filter
+                const matchesFilter = filter === 'all' || variable.scope === filter;
+                
+                // Column-specific filters
+                const matchesColumnFilters = Object.entries(columnFilters).every(([column, filterValue]) => {
+                    if (!filterValue) return true;
+                    
+                    // Handle array fields (slideUsage, jsUsage)
+                    if (column === 'slideUsage' || column === 'jsUsage') {
+                        const arrayValue = variable[column] || [];
+                        return arrayValue.some(item => 
+                            String(item).toLowerCase().includes(filterValue.toLowerCase())
+                        );
+                    }
+                    
+                    const cellValue = String(variable[column] || '').toLowerCase();
+                    return cellValue.includes(filterValue.toLowerCase());
+                });
+                
+                return matchesGlobalSearch && matchesFilter && matchesColumnFilters;
+            });
+
+            const updateColumnFilter = (column, value) => {
+                setColumnFilters(prev => ({
+                    ...prev,
+                    [column]: value
+                }));
+            };
+            
+            const stats = {
+                total: variables.length,
+                user: variables.filter(v => v.scope === 'User').length,
+                builtIn: variables.filter(v => v.scope === 'builtIn').length
+            };
+            
+            // CRUD Operations
+            const handleEdit = (variableIndex, field, value) => {
+                // Check for duplicate names when editing variableName
+                if (field === 'variableName') {
+                    try {
+                        checkDuplicateName(value, variableIndex);
+                    } catch (error) {
+                        alert(error.message);
+                        return; // Don't update if duplicate
+                    }
+                }
+                
+                const updatedVariables = [...variables];
+                updatedVariables[variableIndex][field] = value;
+                onVariablesUpdate(updatedVariables);
+                console.log(`Updated ${updatedVariables[variableIndex].variableName}.${field} to:`, value);
+            };
+            
+            const handleDelete = (variableIndex) => {
+                if (confirm(`Delete variable "${variables[variableIndex].variableName}"?`)) {
+                    const updatedVariables = variables.filter((_, i) => i !== variableIndex);
+                    onVariablesUpdate(updatedVariables);
+                    console.log('Deleted variable:', variables[variableIndex].variableName);
+                }
+            };
+            
+            // Check for duplicate variable names
+            const checkDuplicateName = (newName, excludeIndex = -1) => {
+                const duplicateIndex = variables.findIndex((v, index) => 
+                    v.variableName === newName && index !== excludeIndex
+                );
+                
+                if (duplicateIndex !== -1) {
+                    throw new Error(`Variable name "${newName}" already exists. Variable names must be unique.`);
+                }
+                
+                return true;
+            };
+
+
+            // Generate Storyline-style IDs matching existing pattern
+            const generateStorylineId = () => {
+                // Analyze existing IDs to match pattern
+                const existingIds = variables.map(v => v.internalId).filter(id => id && id !== '');
+                
+                if (existingIds.length > 0) {
+                    // Use pattern from existing IDs (hexadecimal segments with dashes)
+                    console.log('Sample existing ID:', existingIds[0]);
+                }
+                
+                // Generate hexadecimal segments like: 6abc1234-5678-9def-abcd-1234567890ab
+                const segments = [
+                    Math.random().toString(16).substring(2, 10), // 8 chars
+                    Math.random().toString(16).substring(2, 6),  // 4 chars
+                    Math.random().toString(16).substring(2, 6),  // 4 chars
+                    Math.random().toString(16).substring(2, 6),  // 4 chars
+                    Math.random().toString(16).substring(2, 14)  // 12 chars
+                ];
+                
+                return segments.join('-');
+            };
+
+            const handleAdd = () => {
+                // Generate unique variable name
+                let baseName = 'NewVariable';
+                let counter = 1;
+                let uniqueName = baseName;
+                
+                // Find a unique name by appending numbers
+                while (variables.some(v => v.variableName === uniqueName)) {
+                    uniqueName = `${baseName}${counter}`;
+                    counter++;
+                }
+                
+                try {
+                    checkDuplicateName(uniqueName);
+                } catch (error) {
+                    alert(error.message);
+                    return;
+                }
+                
+                const gId = generateStorylineId();
+                const verGId = generateStorylineId(); // Different ID for version
+                
+                const newVariable = {
+                    variableName: uniqueName,
+                    dataType: 'Text',
+                    defaultValue: '',
+                    randomMin: '',
+                    randomMax: '',
+                    scope: 'User',
+                    internalId: gId,
+                    versionId: verGId,
+                    slideUsage: [],
+                    jsUsage: [],
+                    description: '',
+                    tags: '',
+                    owner: '',
+                    useCount: 0
+                };
+                const updatedVariables = [...variables, newVariable];
+                onVariablesUpdate(updatedVariables);
+                console.log('Added new variable with IDs:', newVariable.variableName, 'g:', gId, 'verG:', verGId);
+            };
+            
+            const startEdit = (variableIndex, field, currentValue) => {
+                setEditingCell(`${variableIndex}-${field}`);
+                setEditValue(currentValue);
+            };
+            
+            const saveEdit = (variableIndex, field) => {
+                handleEdit(variableIndex, field, editValue);
+                setEditingCell(null);
+                setEditValue('');
+            };
+            
+            const cancelEdit = () => {
+                setEditingCell(null);
+                setEditValue('');
+            };
+
+            const handleSyncToStoryline = async () => {
+                if (!window.originalStoryFile) {
+                    alert('Please upload a .story file first');
+                    return;
+                }
+                
+                try {
+                    const success = await syncToStoryline(variables, window.originalStoryFile);
+                    if (success) {
+                        alert('Successfully synced variables to Storyline file!');
+                    }
+                } catch (error) {
+                    alert(`Error syncing to Storyline: ${error.message}`);
+                }
+            };
+
+            const handleUpdateFromStoryline = async (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    try {
+                        const result = await updateFromStoryline(file, variables);
+                        onVariablesUpdate(result.variables);
+                        
+                        const { stats } = result;
+                        alert(`Updated from Storyline!\n\nChanges:\n• ${stats.added} variables added\n• ${stats.updated} variables updated\n• ${stats.removed} variables removed\n\nTotal: ${stats.total} variables`);
+                        
+                        console.log('Update from Storyline completed:', stats);
+                    } catch (error) {
+                        console.error('Update from Storyline error:', error);
+                        alert(`Error updating from Storyline: ${error.message}`);
+                    }
+                }
+                
+                // Reset the file input
+                event.target.value = '';
+            };
+
+            const handleCSVImport = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    console.log('Starting CSV import:', file.name);
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            const csvText = e.target.result;
+                            console.log('CSV content length:', csvText.length);
+                            console.log('CSV preview:', csvText.substring(0, 500));
+                            
+                            const importedVariables = parseCSV(csvText);
+                            console.log('Parsed variables from CSV:', importedVariables.length);
+                            console.log('Sample imported variable:', importedVariables[0]);
+                            
+                            if (importedVariables.length > 0) {
+                                console.log('Calling onVariablesUpdate with imported data');
+                                onVariablesUpdate(importedVariables);
+                                
+                                // Force a re-render by updating the state
+                                setTimeout(() => {
+                                    console.log('Import completed, should see updated data');
+                                }, 100);
+                                
+                                alert(`Successfully imported ${importedVariables.length} variables from CSV`);
+                            } else {
+                                alert('No variables found in CSV file');
+                            }
+                        } catch (error) {
+                            console.error('CSV import error:', error);
+                            alert(`Error importing CSV: ${error.message}`);
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+                
+                // Reset the file input so the same file can be imported again
+                event.target.value = '';
+            };
+            
+            return (
+                <div className="space-y-4">
+                    {/* Stats and Controls */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                            <p className="text-blue-800 text-sm">
+                                📊 Found <strong>{stats.total}</strong> variables ({stats.user} User, {stats.builtIn} Builtin)
+                            </p>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={handleAdd}
+                                    className="px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700"
+                                >
+                                    ➕ Add Variable
+                                </button>
+                                <button 
+                                    onClick={() => exportToCSV(variables)}
+                                    className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                                >
+                                    📥 Export CSV
+                                </button>
+                                <label className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 cursor-pointer">
+                                    📤 Import CSV
+                                    <input 
+                                        type="file" 
+                                        accept=".csv" 
+                                        onChange={handleCSVImport}
+                                        style={{ display: 'none' }}
+                                    />
+                                </label>
+                                <label className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 cursor-pointer">
+                                    🔄 Update from Storyline
+                                    <input 
+                                        type="file" 
+                                        accept=".story" 
+                                        onChange={handleUpdateFromStoryline}
+                                        style={{ display: 'none' }}
+                                        title="Upload updated .story file to merge changes while preserving descriptions/tags"
+                                    />
+                                </label>
+                                <button 
+                                    onClick={() => handleSyncToStoryline()}
+                                    className="px-3 py-1 bg-orange-600 text-white text-sm rounded hover:bg-orange-700"
+                                    disabled={!window.originalStoryFile}
+                                    title={!window.originalStoryFile ? 'Upload a .story file first' : 'Sync changes back to Storyline'}
+                                >
+                                    💾 Sync to Storyline
                                 </button>
                             </div>
                         </div>
-                        
-                        {showFilters && (
-                            <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
-                                <div className="grid grid-cols-3 gap-4">
-                                    <input
-                                        type="text"
-                                        placeholder="Filter by name..."
-                                        className="input-field"
-                                        value={filters.variableName}
-                                        onChange={(e) => setFilters({...filters, variableName: e.target.value})}
-                                    />
-                                    <select
-                                        className="input-field"
-                                        value={filters.dataType}
-                                        onChange={(e) => setFilters({...filters, dataType: e.target.value})}
-                                    >
-                                        <option value="">All Types</option>
-                                        <option value="Text">Text</option>
-                                        <option value="Number">Number</option>
-                                        <option value="True/False">True/False</option>
-                                    </select>
-                                    <select
-                                        className="input-field"
-                                        value={filters.scope}
-                                        onChange={(e) => setFilters({...filters, scope: e.target.value})}
-                                    >
-                                        <option value="">All Scopes</option>
-                                        <option value="User">User</option>
-                                        <option value="builtIn">Built-in</option>
-                                    </select>
-                                </div>
-                            </div>
-                        )}
-                        
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
-                                    <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Variable Name
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Type
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Default Value
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Scope
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Slide Usage
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            JS Usage
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                    {displayVariables.map((variable, index) => (
-                                        <tr key={index} className="hover:bg-gray-50">
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                                {variable.variableName}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {variable.dataType}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {variable.defaultValue}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                <span className={`px-2 py-1 text-xs rounded-full ${
-                                                    variable.scope === 'User' 
-                                                        ? 'bg-blue-100 text-blue-800' 
-                                                        : 'bg-gray-100 text-gray-800'
-                                                }`}>
-                                                    {variable.scope}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 text-sm text-gray-500">
-                                                {variable.slideUsage.length > 0 ? (
-                                                    <div className="space-y-1">
-                                                        {variable.slideUsage.map((usage, i) => (
-                                                            <div key={i} className="text-xs bg-gray-100 px-2 py-1 rounded">
-                                                                {usage}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-gray-400">None</span>
-                                                )}
-                                            </td>
-                                            <td className="px-6 py-4 text-sm text-gray-500">
-                                                {variable.jsUsage.length > 0 ? (
-                                                    <div className="space-y-1">
-                                                        {variable.jsUsage.map((usage, i) => (
-                                                            <div key={i} className="text-xs bg-yellow-100 px-2 py-1 rounded">
-                                                                {usage}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-gray-400">None</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                    </div>
+                    
+                    {/* Search and Filter */}
+                    <div className="flex gap-4 items-center">
+                        <input
+                            type="text"
+                            placeholder="Search variables..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                        />
+                        <select
+                            value={filter}
+                            onChange={(e) => setFilter(e.target.value)}
+                            className="px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                        >
+                            <option value="all">All Variables ({stats.total})</option>
+                            <option value="User">User Variables ({stats.user})</option>
+                            <option value="builtIn">builtIn Variables ({stats.builtIn})</option>
+                        </select>
+                    </div>
+                    
+                    {/* Sticky top scroll bar */}
+                    <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
+                        <div 
+                            className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200"
+                            style={{ height: '20px' }}
+                            onScroll={(e) => {
+                                // Sync with main table scroll
+                                const mainTable = document.querySelector('.main-table-scroll');
+                                if (mainTable) {
+                                    mainTable.scrollLeft = e.target.scrollLeft;
+                                }
+                            }}
+                            ref={(el) => {
+                                // Set width to match actual table width
+                                if (el) {
+                                    const table = document.querySelector('.main-table-scroll table');
+                                    if (table) {
+                                        const scrollDiv = el.querySelector('div');
+                                        if (scrollDiv) {
+                                            scrollDiv.style.width = table.scrollWidth + 'px';
+                                        }
+                                    }
+                                }
+                            }}
+                        >
+                            <div style={{ height: '1px' }}></div>
                         </div>
                     </div>
-                );
-            };
+                    
+                    <div 
+                        className="overflow-x-auto main-table-scroll"
+                        onScroll={(e) => {
+                            // Sync with top scroll bar
+                            const topScroll = document.querySelector('.sticky.top-0 > div');
+                            if (topScroll) {
+                                topScroll.scrollLeft = e.target.scrollLeft;
+                            }
+                        }}
+                        ref={(el) => {
+                            // Update top scroll bar width when table changes
+                            if (el) {
+                                const updateScrollWidth = () => {
+                                    const table = el.querySelector('table');
+                                    const topScrollDiv = document.querySelector('.sticky.top-0 > div > div');
+                                    if (table && topScrollDiv) {
+                                        topScrollDiv.style.width = table.scrollWidth + 'px';
+                                    }
+                                };
+                                
+                                // Update on load and when content changes
+                                setTimeout(updateScrollWidth, 100);
+                                const observer = new ResizeObserver(updateScrollWidth);
+                                const table = el.querySelector('table');
+                                if (table) observer.observe(table);
+                            }
+                        }}
+                    >
+                        <table className="min-w-full bg-white border border-gray-200 rounded-lg">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 sticky left-0 bg-gray-50 z-20 border-r border-gray-300">
+                                        <div>Variable Name</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.variableName}
+                                            onChange={(e) => updateColumnFilter('variableName', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Description</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.description || ''}
+                                            onChange={(e) => updateColumnFilter('description', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Data Type</div>
+                                        <select
+                                            value={columnFilters.dataType}
+                                            onChange={(e) => updateColumnFilter('dataType', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        >
+                                            <option value="">All</option>
+                                            <option value="Text">Text</option>
+                                            <option value="Number">Number</option>
+                                            <option value="Boolean">Boolean</option>
+                                        </select>
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Default Value</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.defaultValue}
+                                            onChange={(e) => updateColumnFilter('defaultValue', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Random Min</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.randomMin}
+                                            onChange={(e) => updateColumnFilter('randomMin', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Random Max</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.randomMax}
+                                            onChange={(e) => updateColumnFilter('randomMax', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Scope</div>
+                                        <select
+                                            value={columnFilters.scope}
+                                            onChange={(e) => updateColumnFilter('scope', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        >
+                                            <option value="">All</option>
+                                            <option value="User">User</option>
+                                            <option value="builtIn">Built-in</option>
+                                        </select>
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>ID (g)</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.internalId}
+                                            onChange={(e) => updateColumnFilter('internalId', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Version ID</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.versionId}
+                                            onChange={(e) => updateColumnFilter('versionId', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Slide Usage</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.slideUsage || ''}
+                                            onChange={(e) => updateColumnFilter('slideUsage', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>JS Usage</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.jsUsage || ''}
+                                            onChange={(e) => updateColumnFilter('jsUsage', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Tags</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.tags || ''}
+                                            onChange={(e) => updateColumnFilter('tags', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">
+                                        <div>Owner</div>
+                                        <input
+                                            type="text"
+                                            placeholder="Filter..."
+                                            value={columnFilters.owner || ''}
+                                            onChange={(e) => updateColumnFilter('owner', e.target.value)}
+                                            className="mt-1 w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+                                        />
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filteredVariables.map((variable, index) => (
+                                    <tr key={variable.variableName + index} className="border-t border-gray-200 hover:bg-gray-50">
+                                        <td className="px-4 py-3 font-medium text-blue-600 sticky left-0 bg-white z-10 border-r border-gray-300">
+                                            {editingCell === `${index}-variableName` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'variableName');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'variableName')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    onClick={() => startEdit(index, 'variableName', variable.variableName)}
+                                                    className="cursor-pointer hover:bg-blue-50 px-2 py-1 rounded"
+                                                    title="Click to edit"
+                                                >
+                                                    {variable.variableName}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            {editingCell === `${index}-description` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'description');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'description')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    onClick={() => startEdit(index, 'description', variable.description)}
+                                                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded min-h-[24px] text-sm"
+                                                    title="Click to edit"
+                                                >
+                                                    {variable.description || 'Add description...'}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            {editingCell === `${index}-dataType` ? (
+                                                <div className="flex gap-1">
+                                                    <select 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'dataType');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    >
+                                                        <option value="Text">Text</option>
+                                                        <option value="Number">Number</option>
+                                                        <option value="True/False">True/False</option>
+                                                    </select>
+                                                    <button onClick={() => saveEdit(index, 'dataType')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <span 
+                                                    onClick={() => startEdit(index, 'dataType', variable.dataType)}
+                                                    className={`cursor-pointer px-2 py-1 text-xs rounded-full hover:opacity-75 ${
+                                                        variable.dataType === 'Text' ? 'bg-green-100 text-green-800' :
+                                                        variable.dataType === 'Number' ? 'bg-blue-100 text-blue-800' :
+                                                        variable.dataType === 'True/False' ? 'bg-purple-100 text-purple-800' :
+                                                        'bg-gray-100 text-gray-800'
+                                                    }`}
+                                                    title="Click to edit"
+                                                >
+                                                    {variable.dataType}
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-sm">
+                                            {editingCell === `${index}-defaultValue` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'defaultValue');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'defaultValue')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    onClick={() => startEdit(index, 'defaultValue', variable.defaultValue)}
+                                                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded min-h-[24px]"
+                                                    title="Click to edit"
+                                                >
+                                                    {variable.defaultValue || '-'}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-sm">
+                                            {variable.dataType === 'Number' && editingCell === `${index}-randomMin` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="number" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="w-20 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'randomMin');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'randomMin')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    className={variable.dataType === 'Number' ? "cursor-pointer hover:bg-blue-50 px-2 py-1 rounded" : ""}
+                                                    onClick={() => variable.dataType === 'Number' && startEdit(index, 'randomMin', variable.randomMin || '0')}
+                                                    title={variable.dataType === 'Number' ? "Click to edit" : "Only editable for Number variables"}
+                                                >
+                                                    {variable.randomMin || '-'}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-sm">
+                                            {variable.dataType === 'Number' && editingCell === `${index}-randomMax` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="number" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="w-20 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'randomMax');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'randomMax')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    className={variable.dataType === 'Number' ? "cursor-pointer hover:bg-blue-50 px-2 py-1 rounded" : ""}
+                                                    onClick={() => variable.dataType === 'Number' && startEdit(index, 'randomMax', variable.randomMax || '0')}
+                                                    title={variable.dataType === 'Number' ? "Click to edit" : "Only editable for Number variables"}
+                                                >
+                                                    {variable.randomMax || '-'}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-1 text-xs rounded-full ${
+                                                variable.scope === 'builtIn' ? 'bg-orange-100 text-orange-800' : 'bg-green-100 text-green-800'
+                                            }`}>
+                                                {variable.scope}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-xs font-mono text-gray-600" title={variable.internalId}>
+                                            {variable.internalId ? variable.internalId.substring(0, 8) + '...' : '-'}
+                                        </td>
+                                        <td className="px-4 py-3 text-xs font-mono text-gray-600" title={variable.versionId}>
+                                            {variable.versionId ? variable.versionId.substring(0, 8) + '...' : '-'}
+                                        </td>
+                                        <td className="px-4 py-3 text-xs">
+                                            {variable.slideUsage.length > 0 ? (
+                                                <div className="space-y-1">
+                                                    {variable.slideUsage.slice(0, 3).map((usage, i) => (
+                                                        <div key={i} className="text-xs text-gray-600 truncate" title={usage}>
+                                                            {usage}
+                                                        </div>
+                                                    ))}
+                                                    {variable.slideUsage.length > 3 && (
+                                                        <div className="text-xs text-gray-400">+{variable.slideUsage.length - 3} more</div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="text-gray-400 text-xs">No slide usage</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-xs">
+                                            {variable.jsUsage.length > 0 ? (
+                                                <div className="space-y-1">
+                                                    {variable.jsUsage.slice(0, 3).map((usage, i) => (
+                                                        <div key={i} className="text-xs text-yellow-700 truncate" title={usage}>
+                                                            {usage}
+                                                        </div>
+                                                    ))}
+                                                    {variable.jsUsage.length > 3 && (
+                                                        <div className="text-xs text-gray-400">+{variable.jsUsage.length - 3} more</div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="text-gray-400">No JS usage</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            {editingCell === `${index}-tags` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'tags');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'tags')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    onClick={() => startEdit(index, 'tags', variable.tags)}
+                                                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded min-h-[24px] text-sm"
+                                                    title="Click to edit"
+                                                >
+                                                    {variable.tags || 'Add tags...'}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            {editingCell === `${index}-owner` ? (
+                                                <div className="flex gap-1">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editValue}
+                                                        onChange={(e) => setEditValue(e.target.value)}
+                                                        className="flex-1 px-2 py-1 text-sm border border-blue-500 rounded focus:outline-none"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') saveEdit(index, 'owner');
+                                                            if (e.key === 'Escape') cancelEdit();
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(index, 'owner')} className="text-green-600 hover:text-green-800">✓</button>
+                                                    <button onClick={cancelEdit} className="text-red-600 hover:text-red-800">✗</button>
+                                                </div>
+                                            ) : (
+                                                <div 
+                                                    onClick={() => startEdit(index, 'owner', variable.owner)}
+                                                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded min-h-[24px] text-sm"
+                                                    title="Click to edit"
+                                                >
+                                                    {variable.owner || 'Add owner...'}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex gap-1">
+                                                <button 
+                                                    onClick={() => handleDelete(index)}
+                                                    className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                                    title="Delete variable"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
 
-            // Render current view
+        // Main App Component
+        const App = () => {
+            const [currentView, setCurrentView] = useState('upload');
+            const [variables, setVariables] = useState([]);
+            const [extractedVariables, setExtractedVariables] = useState([]);
+            const [isProcessing, setIsProcessing] = useState(false);
+            
+            // Global handler for extracted variables
+            window.handleVariablesExtracted = (variables) => {
+                setExtractedVariables(variables);
+                setCurrentView('explorer');
+                setIsProcessing(false);
+            };
+            
             const renderView = () => {
                 switch (currentView) {
+                    case 'upload':
+                        return <UploadView isProcessing={isProcessing} variables={variables} />;
                     case 'explorer':
                         return (
-                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                                <VariablesTable variables={variables} />
+                            <div className="max-w-6xl mx-auto p-6">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-2xl font-bold">Variable Explorer</h2>
+                                    {extractedVariables.length > 0 && (
+                                        <button 
+                                            className="btn-primary"
+                                            onClick={() => exportToCSV(extractedVariables)}
+                                        >
+                                            📥 Export CSV
+                                        </button>
+                                    )}
+                                </div>
+                                {extractedVariables.length > 0 ? (
+                                    <VariableExplorer 
+                                        variables={extractedVariables} 
+                                        onVariablesUpdate={setExtractedVariables}
+                                    />
+                                ) : (
+                                    <div className="text-center py-8">
+                                        <p className="text-gray-600">No variables loaded. Please upload a .story file first.</p>
+                                        <button 
+                                            className="btn-primary mt-4"
+                                            onClick={() => setCurrentView('upload')}
+                                        >
+                                            Upload File
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         );
                     case 'filtered':
+                        const userVars = extractedVariables.filter(v => v.scope === 'User');
+                        console.log(`Total extracted variables: ${extractedVariables.length}`);
+                        console.log(`User scope variables: ${userVars.length}`);
+                        console.log('User variables:', userVars.map(v => `${v.variableName} (${v.scope})`));
                         return (
-                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                                <VariablesTable 
-                                    variables={variables.filter(v => v.scope === 'User')} 
-                                    showFilters={false}
-                                />
+                            <div className="max-w-6xl mx-auto p-6">
+                                <h2 className="text-2xl font-bold mb-6">User Variables ({userVars.length})</h2>
+                                {userVars.length > 0 ? (
+                                    <VariableExplorer variables={userVars} onVariablesUpdate={setExtractedVariables} />
+                                ) : (
+                                    <div className="text-center py-8">
+                                        <p className="text-gray-600">No clear user variables found. The .story file may not contain custom variables or uses a different format.</p>
+                                        <button 
+                                            className="btn-primary mt-4"
+                                            onClick={() => setCurrentView('explorer')}
+                                        >
+                                            View All Detected Items
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         );
                     default:
@@ -552,20 +2663,9 @@ XML PARSING ASSUMPTIONS:
             );
         };
 
-        // Test if React is loaded
-        console.log('React loaded:', typeof React !== 'undefined');
-        console.log('ReactDOM loaded:', typeof ReactDOM !== 'undefined');
-        console.log('JSZip loaded:', typeof JSZip !== 'undefined');
-        
         // Render the app
-        try {
-            const root = ReactDOM.createRoot(document.getElementById('root'));
-            root.render(<App />);
-            console.log('App rendered successfully');
-        } catch (error) {
-            console.error('Error rendering app:', error);
-            document.getElementById('root').innerHTML = '<div style="padding: 20px; color: red;">Error loading app. Check console for details.</div>';
-        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>

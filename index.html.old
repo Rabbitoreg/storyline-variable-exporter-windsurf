@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<!--
+WINDSURF STORYLINE VARIABLE EXPORTER
+====================================
+
+FUNCTIONALITY:
+- Parse .story files (ZIP containers) to extract variables from story.xml
+- Display variables in editable table with filtering and sorting  
+- Export variables to CSV with usage analysis
+- Import CSV data and merge with existing variables
+- Sync changes back to .story files with validation
+- Add/edit/delete user variables with duplicate name prevention
+
+STORYLINE .STORY FILE STRUCTURE ASSUMPTIONS:
+1. .story files are ZIP archives containing story.xml at root level
+2. Variables are stored in <varLst> section within story.xml
+3. Each variable is a <var> element with required attributes:
+   - g: Internal GUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+   - verG: Version GUID (same format as g)
+   - name: Variable name (unique identifier)
+   - dataType: 'text', 'num', or 'bool' (NOT 'number' or 'true/false')
+   - val: Default value as string
+   - type: 'user' for user variables, 'builtin' for system variables
+   - propPath: Property path (usually empty string for user vars)
+   - isRandom: 'true' or 'false' string
+   - randomMin/randomMax: Numeric strings (default '0')
+   - defaultEmptyIfZero: 'true' or 'false' string
+4. User variables contain <localizedValue /> inner element
+5. Builtin variables may be self-closing or have complex inner content
+6. Variable order and structure must be preserved to avoid corruption
+
+XML PARSING ASSUMPTIONS:
+- Uses DOMParser for robust XML handling of nested/malformed content
+- Preserves exact attribute order and inner content for existing variables
+- Only modifies user variables (scope='User'), never builtin variables
+- Validates XML structure before writing to prevent file corruption
+- Creates backup copies with '_updated' suffix to preserve originals
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Storyline Variable Exporter</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+        .btn-primary {
+            background-color: #2563eb;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-primary:hover {
+            background-color: #1d4ed8;
+        }
+        .btn-secondary {
+            background-color: #e5e7eb;
+            color: #374151;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-secondary:hover {
+            background-color: #d1d5db;
+        }
+        .input-field {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.5rem;
+            outline: none;
+        }
+        .input-field:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState } = React;
+        
+        // Story file parser
+        const parseStoryFile = async (file) => {
+            try {
+                const zip = new JSZip();
+                const contents = await zip.loadAsync(file);
+                
+                const xmlFiles = Object.keys(contents.files).filter(name => 
+                    name.endsWith('.xml') && !contents.files[name].dir
+                );
+                
+                console.log('Found XML files:', xmlFiles);
+                
+                let variables = [];
+                let sceneSlideMap = new Map();
+                
+                const storyXmlFile = xmlFiles.find(f => f.includes('story.xml'));
+                if (storyXmlFile) {
+                    const storyContent = await contents.files[storyXmlFile].async('text');
+                    variables = extractStoryVariables(storyContent);
+                    
+                    for (const xmlFile of xmlFiles) {
+                        const xmlContent = await contents.files[xmlFile].async('text');
+                        findVariableUsageByIds(xmlContent, xmlFile, variables, sceneSlideMap);
+                    }
+                }
+                
+                return variables.reduce((acc, current) => {
+                    const existing = acc.find(item => item.variableName === current.variableName);
+                    if (!existing) {
+                        acc.push(current);
+                    }
+                    return acc;
+                }, []);
+            } catch (error) {
+                throw new Error(`Failed to parse .story file: ${error.message}`);
+            }
+        };
+        
+        // Extract variables from story.xml
+        const extractStoryVariables = (xmlContent) => {
+            const variables = [];
+            
+            try {
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
+                
+                const parseError = xmlDoc.querySelector('parsererror');
+                if (parseError) {
+                    throw new Error('Failed to parse XML: ' + parseError.textContent);
+                }
+                
+                const varElements = xmlDoc.querySelectorAll('var');
+                
+                varElements.forEach((varElement) => {
+                    const varName = varElement.getAttribute('name');
+                    const dataType = varElement.getAttribute('dataType');
+                    const varType = varElement.getAttribute('type');
+                    
+                    if (varName && dataType && varType) {
+                        variables.push({
+                            variableName: varName,
+                            dataType: mapStoryDataType(dataType),
+                            defaultValue: varElement.getAttribute('val') || '',
+                            scope: varType === 'user' ? 'User' : 'builtIn',
+                            slideUsage: [],
+                            jsUsage: [],
+                            description: '',
+                            tags: '',
+                            owner: '',
+                            definedIn: 'story.xml',
+                            internalId: varElement.getAttribute('g') || '',
+                            versionId: varElement.getAttribute('verG') || ''
+                        });
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error parsing XML:', error);
+                throw new Error(`XML parsing failed: ${error.message}`);
+            }
+            
+            return variables;
+        };
+        
+        // Find variable usage in XML files
+        const findVariableUsageByIds = (xmlContent, fileName, variables, sceneSlideMap) => {
+            // Search for JavaScript variable usage
+            const jsPatterns = [
+                /player\.GetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
+                /player\.SetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
+                /GetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
+                /SetVar\s*\(\s*&quot;([^&]+)&quot;/gi,
+                /player\.GetVar\s*\(\s*'([^']+)'/gi,
+                /player\.SetVar\s*\(\s*'([^']+)'/gi,
+                /GetVar\s*\(\s*'([^']+)'/gi,
+                /SetVar\s*\(\s*'([^']+)'/gi
+            ];
+            
+            for (const jsPattern of jsPatterns) {
+                let jsMatch;
+                while ((jsMatch = jsPattern.exec(xmlContent)) !== null) {
+                    const varName = jsMatch[1];
+                    const operation = jsMatch[0].includes('Get') ? 'Get' : 'Set';
+                    
+                    const variable = variables.find(v => v.variableName === varName);
+                    if (variable) {
+                        const jsUsageInfo = `JavaScript ${operation}Var in ${fileName}`;
+                        if (!variable.jsUsage.includes(jsUsageInfo)) {
+                            variable.jsUsage.push(jsUsageInfo);
+                        }
+                    }
+                }
+            }
+        };
+
+        // Map story.xml dataType to standard types
+        const mapStoryDataType = (storyDataType) => {
+            switch (storyDataType.toLowerCase()) {
+                case 'text': return 'Text';
+                case 'num': return 'Number';
+                case 'bool': return 'True/False';
+                default: return storyDataType;
+            }
+        };
+        
+        // Main App Component
+        const App = () => {
+            const [variables, setVariables] = useState([]);
+            const [currentView, setCurrentView] = useState('upload');
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [filters, setFilters] = useState({
+                variableName: '',
+                dataType: '',
+                scope: ''
+            });
+
+            // File upload handler
+            const handleFileUpload = async (files) => {
+                setIsProcessing(true);
+                try {
+                    const file = files[0];
+                    if (!file.name.endsWith('.story')) {
+                        throw new Error('Please select a .story file');
+                    }
+
+                    const extractedVariables = await parseStoryFile(file);
+                    setVariables(extractedVariables);
+                    setCurrentView('explorer');
+                    
+                } catch (error) {
+                    console.error('Error processing file:', error);
+                    alert(`Error: ${error.message}`);
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
+
+            // Export to CSV
+            const exportToCSV = () => {
+                const headers = ['Variable Name', 'Data Type', 'Default Value', 'Scope', 'Slide Usage', 'JS Usage'];
+                const rows = variables.map(v => [
+                    v.variableName,
+                    v.dataType,
+                    v.defaultValue,
+                    v.scope,
+                    v.slideUsage.join('; '),
+                    v.jsUsage.join('; ')
+                ]);
+                
+                const csvContent = [headers, ...rows]
+                    .map(row => row.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
+                    .join('\n');
+                
+                const blob = new Blob([csvContent], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'storyline-variables.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            // Filter variables
+            const filteredVariables = variables.filter(variable => {
+                return Object.entries(filters).every(([key, filterValue]) => {
+                    if (!filterValue) return true;
+                    const variableValue = variable[key] || '';
+                    return variableValue.toLowerCase().includes(filterValue.toLowerCase());
+                });
+            });
+
+            // File drop component
+            const FileDropZone = ({ onDrop, isProcessing }) => {
+                const [isDragOver, setIsDragOver] = useState(false);
+
+                return (
+                    <div
+                        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                            isDragOver ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                        onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            setIsDragOver(false);
+                            onDrop(Array.from(e.dataTransfer.files));
+                        }}
+                    >
+                        {isProcessing ? (
+                            <div className="space-y-4">
+                                <div className="text-lg font-medium text-gray-700">Processing...</div>
+                                <div className="text-sm text-gray-500">Extracting variables from .story file</div>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="text-lg font-medium text-gray-700">Drop your .story file here</div>
+                                <div className="text-sm text-gray-500">or click to browse</div>
+                                <input
+                                    type="file"
+                                    accept=".story"
+                                    onChange={(e) => onDrop(Array.from(e.target.files))}
+                                    className="hidden"
+                                    id="file-input"
+                                />
+                                <label htmlFor="file-input" className="btn-primary inline-block cursor-pointer">
+                                    Choose File
+                                </label>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            // Upload view
+            const UploadView = ({ isProcessing, variables }) => (
+                <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="bg-white rounded-lg shadow p-6">
+                        <h2 className="text-lg font-medium text-gray-900 mb-4">
+                            Upload Storyline File
+                        </h2>
+                        <FileDropZone onDrop={handleFileUpload} isProcessing={isProcessing} />
+                        
+                        {variables.length > 0 && (
+                            <div className="mt-6 p-4 bg-green-50 rounded-lg">
+                                <p className="text-green-800">
+                                    ✅ Found {variables.length} variables. Switch to Explorer to view them.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+
+            // Variables table
+            const VariablesTable = ({ variables, showFilters = true }) => {
+                const displayVariables = showFilters ? filteredVariables : variables;
+                
+                return (
+                    <div className="bg-white rounded-lg shadow overflow-hidden">
+                        <div className="px-6 py-4 border-b border-gray-200">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-lg font-medium text-gray-900">
+                                    Variables ({displayVariables.length})
+                                </h3>
+                                <button onClick={exportToCSV} className="btn-primary">
+                                    Export CSV
+                                </button>
+                            </div>
+                        </div>
+                        
+                        {showFilters && (
+                            <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+                                <div className="grid grid-cols-3 gap-4">
+                                    <input
+                                        type="text"
+                                        placeholder="Filter by name..."
+                                        className="input-field"
+                                        value={filters.variableName}
+                                        onChange={(e) => setFilters({...filters, variableName: e.target.value})}
+                                    />
+                                    <select
+                                        className="input-field"
+                                        value={filters.dataType}
+                                        onChange={(e) => setFilters({...filters, dataType: e.target.value})}
+                                    >
+                                        <option value="">All Types</option>
+                                        <option value="Text">Text</option>
+                                        <option value="Number">Number</option>
+                                        <option value="True/False">True/False</option>
+                                    </select>
+                                    <select
+                                        className="input-field"
+                                        value={filters.scope}
+                                        onChange={(e) => setFilters({...filters, scope: e.target.value})}
+                                    >
+                                        <option value="">All Scopes</option>
+                                        <option value="User">User</option>
+                                        <option value="builtIn">Built-in</option>
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+                        
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Variable Name
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Type
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Default Value
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Scope
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Slide Usage
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            JS Usage
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {displayVariables.map((variable, index) => (
+                                        <tr key={index} className="hover:bg-gray-50">
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                {variable.variableName}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {variable.dataType}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {variable.defaultValue}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                <span className={`px-2 py-1 text-xs rounded-full ${
+                                                    variable.scope === 'User' 
+                                                        ? 'bg-blue-100 text-blue-800' 
+                                                        : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                    {variable.scope}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-sm text-gray-500">
+                                                {variable.slideUsage.length > 0 ? (
+                                                    <div className="space-y-1">
+                                                        {variable.slideUsage.map((usage, i) => (
+                                                            <div key={i} className="text-xs bg-gray-100 px-2 py-1 rounded">
+                                                                {usage}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-gray-400">None</span>
+                                                )}
+                                            </td>
+                                            <td className="px-6 py-4 text-sm text-gray-500">
+                                                {variable.jsUsage.length > 0 ? (
+                                                    <div className="space-y-1">
+                                                        {variable.jsUsage.map((usage, i) => (
+                                                            <div key={i} className="text-xs bg-yellow-100 px-2 py-1 rounded">
+                                                                {usage}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-gray-400">None</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            };
+
+            // Render current view
+            const renderView = () => {
+                switch (currentView) {
+                    case 'explorer':
+                        return (
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                                <VariablesTable variables={variables} />
+                            </div>
+                        );
+                    case 'filtered':
+                        return (
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                                <VariablesTable 
+                                    variables={variables.filter(v => v.scope === 'User')} 
+                                    showFilters={false}
+                                />
+                            </div>
+                        );
+                    default:
+                        return <UploadView isProcessing={isProcessing} variables={variables} />;
+                }
+            };
+            
+            return (
+                <div className="min-h-screen bg-gray-100">
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex justify-between items-center h-16">
+                                <h1 className="text-xl font-bold text-gray-900">
+                                    Storyline Variable Exporter
+                                </h1>
+                            </div>
+                        </div>
+                    </header>
+                    
+                    <nav className="bg-white border-b">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex space-x-8 h-12 items-center">
+                                <button 
+                                    className={`px-3 py-2 text-sm font-medium rounded-md ${
+                                        currentView === 'upload' 
+                                            ? 'bg-blue-100 text-blue-700' 
+                                            : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                                    onClick={() => setCurrentView('upload')}
+                                >
+                                    📤 Upload
+                                </button>
+                                <button 
+                                    className={`px-3 py-2 text-sm font-medium rounded-md ${
+                                        currentView === 'explorer' 
+                                            ? 'bg-blue-100 text-blue-700' 
+                                            : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                                    onClick={() => setCurrentView('explorer')}
+                                >
+                                    🔍 Explorer
+                                </button>
+                                <button 
+                                    className={`px-3 py-2 text-sm font-medium rounded-md ${
+                                        currentView === 'filtered' 
+                                            ? 'bg-blue-100 text-blue-700' 
+                                            : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                                    onClick={() => setCurrentView('filtered')}
+                                >
+                                    🎯 User Variables Only
+                                </button>
+                            </div>
+                        </div>
+                    </nav>
+                    
+                    <main className="py-6">
+                        {renderView()}
+                    </main>
+                </div>
+            );
+        };
+
+        // Test if React is loaded
+        console.log('React loaded:', typeof React !== 'undefined');
+        console.log('ReactDOM loaded:', typeof ReactDOM !== 'undefined');
+        console.log('JSZip loaded:', typeof JSZip !== 'undefined');
+        
+        // Render the app
+        try {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+            console.log('App rendered successfully');
+        } catch (error) {
+            console.error('Error rendering app:', error);
+            document.getElementById('root').innerHTML = '<div style="padding: 20px; color: red;">Error loading app. Check console for details.</div>';
+        }
+    </script>
+</body>
+</html>
