@@ -185,25 +185,53 @@ XML PARSING ASSUMPTIONS:
                     const storyContent = await contents.files[storyXmlFile].async('text');
                     console.log('=== BUILDING SCENE/SLIDE MAP FROM STORY.XML ===');
                     
-                    // Extract scene and slide structure from story.xml
-                    const sceneMatches = storyContent.matchAll(/<scene[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/scene>/gi);
-                    for (const sceneMatch of sceneMatches) {
-                        const sceneName = sceneMatch[1];
-                        const sceneContent = sceneMatch[2];
-                        console.log(`Found scene: "${sceneName}"`);
-                        
-                        // Find slides within this scene
-                        const slideMatches = sceneContent.matchAll(/<slide[^>]*(?:name="([^"]+)"|title="([^"]+)"|displayName="([^"]+)")[^>]*(?:href="([^"]+)"|src="([^"]+)")?/gi);
-                        for (const slideMatch of slideMatches) {
-                            const slideName = slideMatch[1] || slideMatch[2] || slideMatch[3] || 'Unknown Slide';
-                            const slideHref = slideMatch[4] || slideMatch[5];
-                            
-                            if (slideHref) {
-                                sceneSlideMap.set(slideHref, { sceneName, slideName });
-                                console.log(`Mapped ${slideHref} -> "${sceneName} > ${slideName}"`);
-                            }
+                    // Build scene/slide mapping using TOC as documented in story-slide-linkage.md
+                    const parser = new DOMParser();
+                    const storyDoc = parser.parseFromString(storyContent, 'text/xml');
+                    
+                    // First, build scene GUID to name mapping from sceneLst
+                    const sceneGuidToName = new Map();
+                    const scenes = storyDoc.querySelectorAll('sceneLst scene');
+                    console.log(`Found ${scenes.length} scenes in sceneLst`);
+                    
+                    scenes.forEach(scene => {
+                        const sceneGuid = scene.getAttribute('g');
+                        const sceneName = scene.getAttribute('name');
+                        if (sceneGuid && sceneName) {
+                            sceneGuidToName.set(sceneGuid, sceneName);
+                            console.log(`Scene mapping: ${sceneGuid} -> "${sceneName}"`);
                         }
-                    }
+                    });
+                    
+                    // Then, use TOC to map slide GUIDs to scene GUIDs
+                    const slideGuidToSceneGuid = new Map();
+                    const tocSceneEntries = storyDoc.querySelectorAll('toc tocSceneEntry');
+                    console.log(`Found ${tocSceneEntries.length} TOC scene entries`);
+                    
+                    tocSceneEntries.forEach(tocSceneEntry => {
+                        const sceneGuid = tocSceneEntry.getAttribute('refG');
+                        const tocSlideEntries = tocSceneEntry.querySelectorAll('tocSlideEntry');
+                        
+                        tocSlideEntries.forEach(tocSlideEntry => {
+                            const slideGuid = tocSlideEntry.getAttribute('refG');
+                            if (slideGuid && sceneGuid) {
+                                slideGuidToSceneGuid.set(slideGuid, sceneGuid);
+                                console.log(`TOC mapping: slide ${slideGuid} -> scene ${sceneGuid}`);
+                            }
+                        });
+                    });
+                    
+                    // Build final mapping for slide files
+                    xmlFiles.forEach(xmlFile => {
+                        if (xmlFile.includes('/slides/') && xmlFile.endsWith('.xml')) {
+                            // Extract slide GUID from filename or content when processing
+                            sceneSlideMap.set(xmlFile, { 
+                                slideGuidToSceneGuid, 
+                                sceneGuidToName,
+                                needsGuidResolution: true 
+                            });
+                        }
+                    });
                     
                     console.log('=== EXTRACTING VARIABLES FROM STORY.XML ===');
                     variables = extractStoryVariables(storyContent);
@@ -370,23 +398,44 @@ XML PARSING ASSUMPTIONS:
                     }
                 }
                 
-                // Extract scene name
+                // Extract scene name using TOC-based resolution
                 let sceneName = 'Unknown Scene';
-                const sceneElement = xmlDoc.querySelector('scene');
-                console.log(`Scene element found:`, !!sceneElement);
-                if (sceneElement) {
-                    console.log(`Scene attributes:`, Array.from(sceneElement.attributes).map(attr => `${attr.name}="${attr.value}"`));
-                    sceneName = sceneElement.getAttribute('name') || 
-                               sceneElement.getAttribute('title') || 
-                               sceneName;
-                    console.log(`Extracted scene name: "${sceneName}"`);
-                }
                 
-                // If we have a scene mapping, use that
+                // Check if we have TOC-based mapping for this file
                 const mappedInfo = sceneSlideMap.get(fileName);
-                if (mappedInfo && mappedInfo.sceneName) {
+                if (mappedInfo && mappedInfo.needsGuidResolution) {
+                    // Extract slide GUID from the slide XML
+                    const slideGuid = sldElement?.getAttribute('g');
+                    console.log(`Slide GUID from XML: ${slideGuid}`);
+                    
+                    if (slideGuid) {
+                        // Use TOC mapping: slideGuid -> sceneGuid -> sceneName
+                        const sceneGuid = mappedInfo.slideGuidToSceneGuid.get(slideGuid);
+                        console.log(`Scene GUID from TOC: ${sceneGuid}`);
+                        
+                        if (sceneGuid) {
+                            const resolvedSceneName = mappedInfo.sceneGuidToName.get(sceneGuid);
+                            if (resolvedSceneName) {
+                                sceneName = resolvedSceneName;
+                                console.log(`✅ Resolved scene name via TOC: "${sceneName}"`);
+                            }
+                        }
+                    }
+                } else if (mappedInfo && mappedInfo.sceneName) {
+                    // Fallback to direct mapping
                     sceneName = mappedInfo.sceneName;
-                    console.log(`Using mapped scene name: "${sceneName}"`);
+                    console.log(`Using direct mapped scene name: "${sceneName}"`);
+                } else {
+                    // Fallback to scene element in XML
+                    const sceneElement = xmlDoc.querySelector('scene');
+                    console.log(`Fallback scene element found:`, !!sceneElement);
+                    if (sceneElement) {
+                        console.log(`Scene attributes:`, Array.from(sceneElement.attributes).map(attr => `${attr.name}="${attr.value}"`));
+                        sceneName = sceneElement.getAttribute('name') || 
+                                   sceneElement.getAttribute('title') || 
+                                   sceneName;
+                        console.log(`Extracted scene name from XML: "${sceneName}"`);
+                    }
                 }
                 
                 // Find the object context around the variable reference position
