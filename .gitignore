@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+.nuxt/
+.output/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.development
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Development files (keep clean for deployment)
+apps/
+packages/
+pnpm-workspace.yaml
+tsconfig.json
+*.ts
+*.tsx
+src/
+vite.config.ts
+tailwind.config.js
+postcss.config.js
+
+# Temporary folders
+tmp/
+temp/

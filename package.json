@@ -1,0 +1,13 @@
+{
+  "name": "storyline-variable-exporter",
+  "version": "1.0.0",
+  "description": "Extract and manage variables from Articulate Storyline projects",
+  "main": "index.html",
+  "scripts": {
+    "build": "echo 'Static HTML app ready'",
+    "start": "echo 'Open index.html in browser'"
+  },
+  "keywords": ["storyline", "variables", "e-learning", "articulate"],
+  "author": "",
+  "license": "MIT"
+}
