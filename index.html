@@ -491,38 +491,8 @@ XML PARSING ASSUMPTIONS:
 
         // Find variable usage by ID references in XML files
         const findVariableUsageByIds = (xmlContent, fileName, variables, sceneSlideMap) => {
-            // Search for variable references by g ID (slide usage)
-            for (const variable of variables) {
-                if (!variable.internalId) continue;
-                
-                // Pattern for g="variableId" references (these are slide usage - variable references in slide elements)
-                const gPattern = new RegExp(`g="${variable.internalId.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}"`, 'gi');
-                let gMatch;
-                while ((gMatch = gPattern.exec(xmlContent)) !== null) {
-                    const sceneSlideInfo = extractSceneSlideInfo(xmlContent, gMatch.index, fileName, sceneSlideMap);
-                    // Ensure consistent format: "Referenced by [object] on [slide] in [scene]"
-                    const usageInfo = sceneSlideInfo.startsWith('Referenced by') ? sceneSlideInfo : `Referenced by "Unknown Object" on "${sceneSlideInfo}" in "Unknown Scene"`;
-                    if (!variable.slideUsage.includes(usageInfo)) {
-                        variable.slideUsage.push(usageInfo);
-                        console.log(`Found ${variable.variableName} slide usage by g ID: ${usageInfo}`);
-                    }
-                }
-                
-                // Pattern for verG="versionId" references (these are also slide usage)
-                if (variable.versionId) {
-                    const verGPattern = new RegExp(`verG="${variable.versionId.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}"`, 'gi');
-                    let verGMatch;
-                    while ((verGMatch = verGPattern.exec(xmlContent)) !== null) {
-                        const sceneSlideInfo = extractSceneSlideInfo(xmlContent, verGMatch.index, fileName, sceneSlideMap);
-                        // Ensure consistent format: "Referenced by [object] on [slide] in [scene]"
-                        const usageInfo = sceneSlideInfo.startsWith('Referenced by') ? sceneSlideInfo : `Referenced by "Unknown Object" on "${sceneSlideInfo}" in "Unknown Scene"`;
-                        if (!variable.slideUsage.includes(usageInfo)) {
-                            variable.slideUsage.push(usageInfo);
-                            console.log(`Found ${variable.variableName} slide usage by verG ID: ${usageInfo}`);
-                        }
-                    }
-                }
-            }
+            // NOTE: Slide usage (%varname% in text) is handled separately in extractVariablesFromXML
+            // This function only handles JavaScript usage (GetVar/SetVar calls)
             
             // Search for JavaScript variable usage - focus on XML-encoded quotes
             console.log(`=== SEARCHING FOR JS USAGE IN ${fileName} ===`);
