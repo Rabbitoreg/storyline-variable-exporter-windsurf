@@ -252,25 +252,25 @@ XML PARSING ASSUMPTIONS:
                     for (const xmlFile of xmlFiles) {
                         const xmlContent = await contents.files[xmlFile].async('text');
                         
-                        // Extract %varname% references from slide XML files
-                        const slideVariables = extractVariablesFromXML(xmlContent, xmlFile);
-                        
-                        // Merge slide variables with existing variables
-                        for (const slideVar of slideVariables) {
-                            const existing = variables.find(v => v.variableName === slideVar.variableName);
-                            if (existing) {
-                                // Merge slide usage into existing variable
-                                if (slideVar.slideUsage) {
+                        // Extract %varname% references from slide XML files (only for slide usage detection)
+                        if (xmlFile.includes('/slides/') && xmlFile.endsWith('.xml')) {
+                            const textBoxVarPattern = /%([^%]+)%/gi;
+                            let textBoxMatch;
+                            while ((textBoxMatch = textBoxVarPattern.exec(xmlContent)) !== null) {
+                                const varName = textBoxMatch[1];
+                                
+                                // Find existing variable to add slide usage to
+                                const existing = variables.find(v => v.variableName === varName);
+                                if (existing) {
+                                    // Add slide usage to existing variable
                                     if (!existing.slideUsage) existing.slideUsage = [];
-                                    for (const usage of slideVar.slideUsage) {
-                                        if (!existing.slideUsage.includes(usage)) {
-                                            existing.slideUsage.push(usage);
-                                        }
+                                    
+                                    const slideUsageLocation = `Referenced by text element on "${xmlFile}" in slide`;
+                                    if (!existing.slideUsage.includes(slideUsageLocation)) {
+                                        existing.slideUsage.push(slideUsageLocation);
+                                        console.log(`Added slide usage for ${varName}: ${slideUsageLocation}`);
                                     }
                                 }
-                            } else {
-                                // Add new variable found in slides
-                                variables.push(slideVar);
                             }
                         }
                         
