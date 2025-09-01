@@ -1612,6 +1612,13 @@ XML PARSING ASSUMPTIONS:
                 builtIn: variables.filter(v => v.scope === 'builtIn').length
             };
             
+            const handleFileInput = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    handleFileSelect(file);
+                }
+            };
+
             const handleFileSelect = async (file) => {
                 setSelectedFile(file);
                 console.log('File selected:', file.name);
