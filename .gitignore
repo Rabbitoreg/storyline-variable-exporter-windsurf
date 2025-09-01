@@ -43,3 +43,5 @@ postcss.config.js
 # Temporary folders
 tmp/
 temp/
+
+*.story
