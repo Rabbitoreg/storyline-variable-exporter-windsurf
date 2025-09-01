@@ -1605,6 +1605,10 @@ XML PARSING ASSUMPTIONS:
             const [isDragOver, setIsDragOver] = React.useState(false);
             const [selectedFile, setSelectedFile] = React.useState(null);
             
+            // Get global state setters from window
+            const setIsProcessing = window.setIsProcessing || (() => {});
+            const setProcessingStatus = window.setProcessingStatus || (() => {});
+            
             // Calculate stats for display
             const stats = {
                 total: variables.length,
@@ -2628,6 +2632,7 @@ XML PARSING ASSUMPTIONS:
             
             // Global progress status updater
             window.setProcessingStatus = setProcessingStatus;
+            window.setIsProcessing = setIsProcessing;
             
             const renderView = () => {
                 switch (currentView) {
