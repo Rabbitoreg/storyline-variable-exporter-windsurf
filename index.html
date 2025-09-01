@@ -1608,6 +1608,7 @@ XML PARSING ASSUMPTIONS:
             // Get global state setters from window
             const setIsProcessing = window.setIsProcessing || (() => {});
             const setProcessingStatus = window.setProcessingStatus || (() => {});
+            const processingStatus = window.processingStatus || '';
             
             // Calculate stats for display
             const stats = {
@@ -2635,6 +2636,7 @@ XML PARSING ASSUMPTIONS:
             // Global progress status updater
             window.setProcessingStatus = setProcessingStatus;
             window.setIsProcessing = setIsProcessing;
+            window.processingStatus = processingStatus;
             
             const renderView = () => {
                 switch (currentView) {
